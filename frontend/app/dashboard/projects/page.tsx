@@ -19,6 +19,8 @@ const FILTER_PRESETS_KEY = 'agenticpay-project-filter-presets';
 const STATUS_OPTIONS = ['active', 'completed', 'cancelled'] as const;
 
 type StatusOption = (typeof STATUS_OPTIONS)[number];
+type SortField = 'date' | 'amount' | 'status';
+type SortDirection = 'asc' | 'desc';
 
 type FilterPreset = {
   name: string;
@@ -44,6 +46,19 @@ function getStatusColor(status: string): string {
   }
 }
 
+const SortIcon = ({
+  field,
+  sortField,
+  sortDirection,
+}: {
+  field: SortField;
+  sortField: SortField;
+  sortDirection: SortDirection;
+}) => {
+  if (field !== sortField) return <span className="ml-1 text-gray-300">↕</span>;
+  return <span className="ml-1 text-gray-700">{sortDirection === 'asc' ? '↑' : '↓'}</span>;
+};
+
 export default function ProjectsPage() {
   const router = useRouter();
   const { isConnected } = useAccount();
@@ -58,6 +73,8 @@ export default function ProjectsPage() {
   const [maxAmount, setMaxAmount] = useState('');
   const [presetName, setPresetName] = useState('');
   const [presets, setPresets] = useState<Record<string, FilterPreset>>({});
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   useEffect(() => {
     const stored = window.localStorage.getItem(FILTER_PRESETS_KEY);
@@ -92,6 +109,20 @@ export default function ProjectsPage() {
       return true;
     });
   }, [projects, statusFilter, startDate, endDate, minAmount, maxAmount]);
+
+  const sortedProjects = useMemo(() => {
+    return [...filteredProjects].sort((a, b) => {
+      let comparison = 0;
+      if (sortField === 'date') {
+        comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      } else if (sortField === 'amount') {
+        comparison = Number(a.totalAmount) - Number(b.totalAmount);
+      } else if (sortField === 'status') {
+        comparison = a.status.localeCompare(b.status);
+      }
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+  }, [filteredProjects, sortField, sortDirection]);
 
   const savePreset = () => {
     if (!presetName.trim()) return;
@@ -131,6 +162,15 @@ export default function ProjectsPage() {
       delete next[name];
       return next;
     });
+  };
+
+  const handleSort = (field: SortField) => {
+    if (field === sortField) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
   };
 
   if (loading) {
@@ -308,6 +348,28 @@ export default function ProjectsPage() {
 
         {/* Project cards */}
         <div className="space-y-4">
+          {/* Sort controls */}
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => handleSort('date')}
+              className="px-3 py-2 text-sm font-medium rounded-md border border-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2 cursor-pointer select-none"
+            >
+              Date <SortIcon field="date" sortField={sortField} sortDirection={sortDirection} />
+            </button>
+            <button
+              onClick={() => handleSort('amount')}
+              className="px-3 py-2 text-sm font-medium rounded-md border border-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2 cursor-pointer select-none"
+            >
+              Amount <SortIcon field="amount" sortField={sortField} sortDirection={sortDirection} />
+            </button>
+            <button
+              onClick={() => handleSort('status')}
+              className="px-3 py-2 text-sm font-medium rounded-md border border-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2 cursor-pointer select-none"
+            >
+              Status <SortIcon field="status" sortField={sortField} sortDirection={sortDirection} />
+            </button>
+          </div>
+
           {filteredProjects.length === 0 && (
             <Card>
               <CardContent className="pt-6">
@@ -329,7 +391,7 @@ export default function ProjectsPage() {
             </Card>
           )}
 
-          {filteredProjects.map((project, index) => {
+          {sortedProjects.map((project, index) => {
             const completedMilestones = project.milestones.filter(
               (m) => m.status === 'completed',
             ).length;
