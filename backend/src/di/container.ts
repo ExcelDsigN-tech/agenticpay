@@ -77,16 +77,16 @@ export class DIContainer {
     return reg.factory(this, scope) as T;
   }
 
-    // Controllers
+  initialize(): void {
+    const projectService = this.get<ProjectService>('ProjectService');
     const projectController = new ProjectController(projectService);
-    this.services.set("ProjectController", projectController);
+    this.set("ProjectController", projectController);
 
-    // Payment providers (#480)
     providerRegistry.register(new SorobanPaymentProvider());
     providerRegistry.register(new EvmPaymentProvider());
     providerRegistry.register(new FiatPaymentProvider());
     providerRegistry.register(new CreditPaymentProvider());
-    this.services.set("PaymentProviderRegistry", providerRegistry);
+    this.set("PaymentProviderRegistry", providerRegistry);
   }
 
   /**
