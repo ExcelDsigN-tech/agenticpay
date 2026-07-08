@@ -1,13 +1,6 @@
 name: Performance Regression CI
 
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - 'packages/**'
-      - 'lighthouse/**'
-      - '.github/workflows/performance.yml'
+on: workflow_dispatch
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
