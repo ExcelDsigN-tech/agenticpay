@@ -877,7 +877,7 @@ export class FeatureFlagRegistry {
   // ── Core: evaluate ───────────────────────────────────────────────────────
 
   async evaluate<T = unknown>(flagKey: string, ctx: FlagEvaluationContext): Promise<FlagEvaluationResult<T>> {
-    const cKey = evalCacheKey(flagKey, ctx);
+    const cKey = `eval:${TENANT}:${evalCacheKey(flagKey, ctx)}`;
     const cached = EVAL_CACHE.get(cKey);
     if (cached && cached.key === flagKey) {
       return { ...cached, value: cached.value as T } as FlagEvaluationResult<T>;
