@@ -41,6 +41,7 @@ import { cacheControlNoStore } from './middleware/cache-control.js';
 import { httpLogger, correlationMiddleware } from './middleware/logger.js';
 import { validateEnv, config as getConfig } from './config/env.js';
 import { flagsRouter } from './routes/flags.js';
+import { featureFlagsRouter } from './routes/featureFlags.js';
 import { emailRouter } from './routes/email.js';
 import { portfolioRouter } from './routes/portfolio.js';
 import { backupRouter } from './routes/backup.js';
@@ -136,6 +137,7 @@ import piiRouter from './routes/pii.js';
 import { piiRedactionMiddleware } from './middleware/pii-redaction.js';
 import { reorgRouter } from './routes/reorg.js';
 import { getReorgDetector } from './services/chain/reorg-detector.js';
+import { featureFlagRegistry } from './services/featureFlagRegistry.js';
 
 // Validate environment variables at startup
 validateEnv();
@@ -281,6 +283,7 @@ apiV1Router.use('/sla', slaRouter);
 apiV1Router.use('/onboarding', onboardingRouter);
 apiV1Router.use('/legacy', legacyRouter);
 apiV1Router.use('/flags', flagsRouter);
+apiV1Router.use('/feature-flags', featureFlagsRouter);
 apiV1Router.use('/rate-limit', rateLimitAnalyticsRouter);
 apiV1Router.use('/zk-identity', zkIdentityRouter);
 apiV1Router.use('/kyb', kybRouter);
@@ -511,6 +514,21 @@ setInterval(async () => {
 if (featureFlags.evaluate('batch-operations')) {
   batchProcessor.start();
   console.log('[BatchProcessor] Started');
+}
+
+// Feature flag gradual-rollout scheduler + stale-flag detection (Issue #476)
+// Runs every minute so percentage rollouts advance without manual triggers.
+// Set FF_SCHEDULER_ENABLED=false to disable in tests.
+if (process.env.FF_SCHEDULER_ENABLED !== 'false') {
+  setInterval(async () => {
+    try {
+      const advanced = await featureFlagRegistry.runScheduledRollouts(new Date());
+      if (advanced > 0) console.log(`[FeatureFlags] Advanced ${advanced} scheduled rollout(s)`);
+    } catch (err) {
+      console.error('[FeatureFlags] Scheduler tick failed:', err);
+    }
+  }, 60_000);
+  console.log('[FeatureFlags] Gradual-rollout scheduler started');
 }
 
 getRedisCache().connect().then(() => {

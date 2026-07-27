@@ -2151,3 +2151,242 @@ model TransactionReorg {
   @@map("transaction_reorgs")
 }
 
+
+// ─── Feature Flag System (#476) ──────────────────────────────────────────────
+
+enum FeatureFlagType {
+  boolean
+  string
+  number
+  json
+}
+
+enum FeatureFlagStatus {
+  draft
+  active
+  paused
+  archived
+}
+
+enum TargetingRuleType {
+  percentage
+  user_segment
+  environment
+  user_attribute
+  allowlist
+}
+
+enum RolloutScheduleStatus {
+  pending
+  active
+  paused
+  completed
+  cancelled
+}
+
+enum ExperimentStatus {
+  draft
+  running
+  paused
+  completed
+  aborted
+}
+
+model FeatureFlag {
+  id           String            @id @default(uuid())
+  tenantId     String            @map("tenant_id")
+  key          String
+  name         String
+  description  String?
+  type         FeatureFlagType   @default(boolean)
+  defaultValue Json              @map("default_value")
+  status       FeatureFlagStatus @default(draft)
+  environment  String            @default("all")
+  ownerEmail   String?           @map("owner_email")
+  expiresAt    DateTime?         @map("expires_at")
+  metadata     Json?
+  version      Int               @default(1)
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+  archivedAt   DateTime?         @map("archived_at")
+
+  rules      FeatureFlagRule[]
+  schedules  RolloutSchedule[]
+  experiments Experiment[]
+  exposures  FlagExposure[]
+  stats      FlagUsageStat[]
+  auditLogs  FeatureFlagAuditLog[]
+
+  @@unique([tenantId, key])
+  @@index([tenantId, status])
+  @@index([environment])
+  @@index([status, archivedAt])
+  @@map("feature_flags")
+}
+
+model FeatureFlagRule {
+  id         String            @id @default(uuid())
+  flagId     String            @map("flag_id")
+  type       TargetingRuleType
+  priority   Int               @default(0)
+  conditions Json
+  enabled    Boolean           @default(true)
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+
+  flag FeatureFlag @relation(fields: [flagId], references: [id], onDelete: Cascade)
+
+  @@index([flagId, priority])
+  @@index([type])
+  @@map("feature_flag_rules")
+}
+
+model UserSegment {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  name        String
+  description String?
+  conditions  Json
+  matchType   String    @default("all")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("user_segments")
+}
+
+model RolloutSchedule {
+  id                String                @id @default(uuid())
+  flagId            String                @map("flag_id")
+  startPercentage   Int                   @map("start_percentage")
+  endPercentage     Int                   @map("end_percentage")
+  currentPercentage Int                   @default(0) @map("current_percentage")
+  incrementPercent  Int                   @map("increment_percent")
+  incrementInterval String
+  status            RolloutScheduleStatus @default(pending)
+  startedAt         DateTime?             @map("started_at")
+  nextIncrementAt   DateTime?             @map("next_increment_at")
+  completedAt       DateTime?             @map("completed_at")
+  pausedReason      String?               @map("paused_reason")
+  createdBy         String                @map("created_by")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  flag FeatureFlag @relation(fields: [flagId], references: [id], onDelete: Cascade)
+
+  @@index([flagId, status])
+  @@index([status, nextIncrementAt])
+  @@map("rollout_schedules")
+}
+
+model Experiment {
+  id            String           @id @default(uuid())
+  flagId        String           @map("flag_id")
+  name          String
+  hypothesis    String?
+  status        ExperimentStatus @default(draft)
+  startedAt     DateTime?        @map("started_at")
+  endedAt       DateTime?        @map("ended_at")
+  primaryMetric String?          @map("primary_metric")
+  createdBy     String           @map("created_by")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  flag        FeatureFlag             @relation(fields: [flagId], references: [id], onDelete: Cascade)
+  variants    ExperimentVariant[]
+  assignments ExperimentAssignment[]
+
+  @@index([flagId, status])
+  @@index([status, startedAt])
+  @@map("experiments")
+}
+
+model ExperimentVariant {
+  id           String   @id @default(uuid())
+  experimentId String   @map("experiment_id")
+  key          String
+  name         String
+  value        Json
+  bucketWeight Int      @default(50) @map("bucket_weight")
+  isControl    Boolean  @default(false) @map("is_control")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  experiment  Experiment              @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  assignments ExperimentAssignment[]
+
+  @@unique([experimentId, key])
+  @@map("experiment_variants")
+}
+
+model ExperimentAssignment {
+  id             String    @id @default(uuid())
+  experimentId   String    @map("experiment_id")
+  variantId      String    @map("variant_id")
+  identifier     String
+  assignedAt     DateTime  @default(now()) @map("assigned_at")
+  exposed        Boolean   @default(false)
+  firstExposedAt DateTime? @map("first_exposed_at")
+
+  experiment Experiment        @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  variant    ExperimentVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([experimentId, identifier])
+  @@index([variantId])
+  @@index([identifier])
+  @@map("experiment_assignments")
+}
+
+model FlagExposure {
+  id          String   @id @default(uuid())
+  flagId      String   @map("flag_id")
+  identifier  String
+  value       Json
+  environment String
+  source      String   @default("server")
+  userAgent   String?  @map("user_agent")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  flag FeatureFlag @relation(fields: [flagId], references: [id], onDelete: Cascade)
+
+  @@index([flagId, createdAt])
+  @@index([identifier, createdAt])
+  @@index([createdAt])
+  @@map("flag_exposures")
+}
+
+model FlagUsageStat {
+  id                String   @id @default(uuid())
+  flagId            String   @map("flag_id")
+  windowStart       DateTime @map("window_start")
+  windowDuration    String   @map("window_duration")
+  evaluations       Int      @default(0)
+  trueCount         Int      @default(0) @map("true_count")
+  falseCount        Int      @default(0) @map("false_count")
+  uniqueIdentifiers Int      @default(0) @map("unique_identifiers")
+
+  flag FeatureFlag @relation(fields: [flagId], references: [id], onDelete: Cascade)
+
+  @@unique([flagId, windowStart, windowDuration])
+  @@index([flagId, windowStart])
+  @@map("flag_usage_stats")
+}
+
+model FeatureFlagAuditLog {
+  id        String   @id @default(uuid())
+  flagId    String   @map("flag_id")
+  actor     String
+  action    String
+  before    Json?
+  after     Json?
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  flag FeatureFlag @relation(fields: [flagId], references: [id], onDelete: Cascade)
+
+  @@index([flagId, createdAt])
+  @@index([actor, createdAt])
+  @@map("feature_flag_audit_logs")
+}
