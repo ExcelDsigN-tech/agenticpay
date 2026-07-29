@@ -97,6 +97,102 @@ export interface RevenueForecast {
   };
 }
 
+// ── Forecast Accuracy Tracking (Issue #637) ──────────────────────────────────
+
+export interface AccuracyMetrics {
+  totalPredictions: number;
+  mae: number;
+  rmse: number;
+  mape: number;
+  bias: number;
+  byGranularity: Record<string, { count: number; mae: number; rmse: number }>;
+}
+
+export interface TrendResult {
+  direction: 'up' | 'down' | 'stable';
+  slope: number;
+  strength: number;
+}
+
+export class ForecastAccuracyTracker {
+  private predictions: Array<{ granularity: string; actual: number; predicted: number; timestamp: number }> = [];
+
+  resetForTests(): void {
+    this.predictions = [];
+  }
+
+  recordPrediction(granularity: string, actual: number, predicted: number): void {
+    this.predictions.push({ granularity, actual, predicted, timestamp: Date.now() });
+  }
+
+  getAccuracyMetrics(): AccuracyMetrics {
+    const byGranularity: Record<string, { count: number; mae: number; rmse: number }> = {};
+    const groups = new Map<string, Array<{ actual: number; predicted: number }>>();
+
+    for (const p of this.predictions) {
+      const g = groups.get(p.granularity) ?? [];
+      g.push({ actual: p.actual, predicted: p.predicted });
+      groups.set(p.granularity, g);
+    }
+
+    for (const [granularity, values] of groups) {
+      const mae = values.reduce((s, v) => s + Math.abs(v.actual - v.predicted), 0) / values.length;
+      const rmse = Math.sqrt(values.reduce((s, v) => s + (v.actual - v.predicted) ** 2, 0) / values.length);
+      byGranularity[granularity] = { count: values.length, mae, rmse };
+    }
+
+    const total = this.predictions.length;
+    if (total === 0) {
+      return { totalPredictions: 0, mae: 0, rmse: 0, mape: 0, bias: 0, byGranularity };
+    }
+
+    const mae = this.predictions.reduce((s, p) => s + Math.abs(p.actual - p.predicted), 0) / total;
+    const rmse = Math.sqrt(this.predictions.reduce((s, p) => s + (p.actual - p.predicted) ** 2, 0) / total);
+    const mape = this.predictions.reduce((s, p) => s + (p.actual > 0 ? Math.abs((p.actual - p.predicted) / p.actual) : 0), 0) / total * 100;
+    const bias = this.predictions.reduce((s, p) => s + (p.predicted - p.actual), 0) / total;
+
+    return { totalPredictions: total, mae, rmse, mape, bias, byGranularity };
+  }
+
+  analyzeTrend(data: number[]): TrendResult {
+    if (data.length < 2) return { direction: 'stable', slope: 0, strength: 0 };
+
+    const n = data.length;
+    const xMean = (n - 1) / 2;
+    const yMean = data.reduce((s, v) => s + v, 0) / n;
+
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < n; i++) {
+      num += (i - xMean) * (data[i] - yMean);
+      den += (i - xMean) ** 2;
+    }
+
+    const slope = den === 0 ? 0 : num / den;
+    const yVariance = data.reduce((s, v) => s + (v - yMean) ** 2, 0);
+    const strength = yVariance === 0 ? 0 : (den === 0 ? 0 : Math.abs(num) / Math.sqrt(den * yVariance));
+
+    let direction: 'up' | 'down' | 'stable';
+    if (slope > data.reduce((s, v) => s + Math.abs(v), 0) / n * 0.02) {
+      direction = 'up';
+    } else if (slope < -data.reduce((s, v) => s + Math.abs(v), 0) / n * 0.02) {
+      direction = 'down';
+    } else {
+      direction = 'stable';
+    }
+
+    return { direction, slope, strength };
+  }
+}
+
+export const forecastService = new ForecastAccuracyTracker();
+
+export function buildRevenueForecastWithAccuracy(since?: Date): { forecast: RevenueForecast; accuracy: AccuracyMetrics } {
+  const forecast = analyticsService.buildRevenueForecast(since);
+  const accuracy = forecastService.getAccuracyMetrics();
+  return { forecast, accuracy };
+}
+
 // ── Cohort Analysis ──────────────────────────────────────────────────────────
 
 export interface CohortDefinition {
