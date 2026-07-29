@@ -3,6 +3,7 @@ node_modules/
 
 # Environment
 .env*
+!.env.example
 
 # OS
 .DS_Store
@@ -26,14 +27,38 @@ out/
 # Debug
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Keys
 *.pem
 
-.claude
+# Test artifacts & snapshots
+**/coverage/
+**/__snapshots__/
+**/*.snap
+**/test-results/
+**/playwright-report/
+**/blob-report/
+**/.playwright/
+**/playwright/.cache/
+
+# Security scan reports (generated — do not commit)
+security-reports/
+
+# Build & cache artefacts
+*.tsbuildinfo
+.turbo/
 .lhci_reports/
 bundle-reports/
 trend-data.json
 packages/*/dist/
+
+# Generated code
 frontend/src/generated/
 packages/contracts/src/generated/
+node_modules/.cache/
+
+# Misc
+.claude
+test-write.txt
