@@ -17,6 +17,10 @@ import {
   getInvoiceReminders,
   reconvertInvoiceFxAtPayment,
   generateMultiCurrencyReport,
+  registerMilestoneTrigger,
+  getMilestoneTriggers,
+  removeMilestoneTrigger,
+  buildInvoiceAnalytics,
 } from '../services/invoice.js';
 import type { InvoiceStatus } from '../services/invoice.js';
 import { invoiceSchema, invoiceTaxReportSchema } from '../schemas/index.js';
@@ -231,5 +235,67 @@ invoiceRouter.post(
   asyncHandler(async (_req, res) => {
     const reminders = processOverdueInvoices();
     res.json({ processed: reminders.length, reminders });
+  })
+);
+
+// ── Milestone-Triggered Invoicing (Issue #636) ───────────────────────────────
+
+const milestoneTriggerSchema = z.object({
+  projectId: z.string().min(1),
+  merchantId: z.string().min(1),
+  countryCode: z.string().optional(),
+  presentmentCurrency: z.string().optional(),
+  autoSend: z.boolean().optional(),
+  recipientEmail: z.string().email().optional(),
+  recipientName: z.string().optional(),
+});
+
+invoiceRouter.post(
+  '/milestone-trigger',
+  validate(milestoneTriggerSchema),
+  asyncHandler(async (req, res) => {
+    const config = req.body;
+    registerMilestoneTrigger(config);
+    res.status(201).json({ ok: true, config });
+  })
+);
+
+invoiceRouter.get(
+  '/milestone-trigger/:projectId',
+  asyncHandler(async (req, res) => {
+    const projectId = Array.isArray(req.params.projectId) ? req.params.projectId[0] : req.params.projectId;
+    const triggers = getMilestoneTriggers(projectId);
+    res.json({ triggers });
+  })
+);
+
+invoiceRouter.delete(
+  '/milestone-trigger/:projectId/:merchantId',
+  asyncHandler(async (req, res) => {
+    const projectId = Array.isArray(req.params.projectId) ? req.params.projectId[0] : req.params.projectId;
+    const merchantId = Array.isArray(req.params.merchantId) ? req.params.merchantId[0] : req.params.merchantId;
+    const removed = removeMilestoneTrigger(projectId, merchantId);
+    if (!removed) throw new AppError(404, 'Milestone trigger not found', 'NOT_FOUND');
+    res.json({ ok: true });
+  })
+);
+
+// ── Invoice Analytics (Issue #636) ───────────────────────────────────────────
+
+invoiceRouter.get(
+  '/analytics',
+  asyncHandler(async (req, res) => {
+    const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
+    const analytics = buildInvoiceAnalytics(merchantId);
+    res.json({ data: analytics });
+  })
+);
+
+invoiceRouter.get(
+  '/analytics/summary',
+  asyncHandler(async (req, res) => {
+    const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
+    const analytics = buildInvoiceAnalytics(merchantId);
+    res.json({ data: analytics });
   })
 );
