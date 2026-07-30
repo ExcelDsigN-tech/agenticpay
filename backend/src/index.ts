@@ -150,6 +150,7 @@ import { refundsEnhancedRouter } from './routes/refunds-enhanced.js';
 import { refundsAutomatedRouter } from './routes/refunds-automated.js';
 import { refundQueue } from './queue/refund-queue.js';
 import { databaseRouter } from './routes/database.js';
+import { escalationRouter } from './routes/escalation.js';
 
 // TSOA Controllers for OpenAPI generation
 import { HealthController } from './controllers/health.controller.js';
@@ -489,6 +490,9 @@ app.use('/api/v1/monitoring/pool', poolMonitorRouter);
 
 // Database query performance, index usage, and slow query dashboard
 app.use('/api/v1/database', databaseRouter);
+
+// Automated escalation with SLA tracking — Issue #646
+app.use('/api/v1/escalation', escalationRouter);
 
 // Sandbox environment for testing (with relaxed rate limits)
 const sandboxRouter = createSandboxRouter(getSandboxManager(), getMockPaymentProcessor(), getTestDataSeeder());
