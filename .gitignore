@@ -33,6 +33,17 @@ yarn-error.log*
 # Keys
 *.pem
 
+# Test snapshots
+*.snap
+*.snap.new
+**/__snapshots__/
+**/snapshots/
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+
 # Test artifacts & snapshots
 **/coverage/
 **/__snapshots__/
