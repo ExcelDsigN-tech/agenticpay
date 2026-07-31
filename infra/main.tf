@@ -197,6 +197,32 @@ resource "aws_secretsmanager_secret" "db_credentials" {
   name = "agenticpay-${var.environment}-db-credentials"
 }
 
+# Secrets Manager for application-level secrets (Stripe, OpenAI, VAPID keys, etc).
+# Loaded at runtime by backend/src/config/environments/secrets-manager.ts when
+# AWS_SECRETS_MANAGER_ENABLED=true. Not managed for dev — dev uses local env vars.
+resource "aws_secretsmanager_secret" "app_secrets" {
+  count = var.environment == "dev" ? 0 : 1
+
+  name = "agenticpay-${var.environment}-app-secrets"
+}
+
+resource "aws_iam_policy" "app_secrets_read" {
+  count = var.environment == "dev" ? 0 : 1
+
+  name = "agenticpay-${var.environment}-app-secrets-read-policy"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action   = "secretsmanager:GetSecretValue"
+        Effect   = "Allow"
+        Resource = aws_secretsmanager_secret.app_secrets[0].arn
+      }
+    ]
+  })
+}
+
 resource "aws_secretsmanager_secret_version" "db_credentials" {
   secret_id = aws_secretsmanager_secret.db_credentials.id
   secret_string = jsonencode({
@@ -455,4 +481,207 @@ resource "aws_amplify_app" "frontend" {
     NEXT_PUBLIC_API_URL = "https://${aws_cloudfront_distribution.backend.domain_name}/api/v1"
     NODE_ENV            = var.environment
   }
+}
+
+# ------------------------------------------------------------------------------
+# GAS METRICS MONITORING
+# ------------------------------------------------------------------------------
+
+# CloudWatch Log Group for Gas Estimation Service
+resource "aws_cloudwatch_log_group" "gas_metrics" {
+  name              = "/aws/agenticpay/gas-metrics-${var.environment}"
+  retention_in_days = var.environment == "prod" ? 30 : 7
+
+  tags = {
+    Name = "agenticpay-gas-metrics-${var.environment}"
+  }
+}
+
+# CloudWatch Dashboard for Gas Metrics
+resource "aws_cloudwatch_dashboard" "gas_metrics" {
+  dashboard_name = "agenticpay-gas-metrics-${var.environment}"
+
+  dashboard_body = jsonencode({
+    widgets = [
+      {
+        type   = "metric"
+        x      = 0
+        y      = 0
+        width  = 12
+        height = 6
+
+        properties = {
+          metrics = [
+            ["AWS/AppRunner", "CPUUtilization", "ServiceName", aws_apprunner_service.backend.service_name],
+            [".", "MemoryUtilization", ".", "."],
+          ]
+          period = 300
+          stat   = "Average"
+          region = var.aws_region
+          title  = "Backend Resource Utilization"
+          view   = "timeSeries"
+        }
+      },
+      {
+        type   = "log"
+        x      = 0
+        y      = 6
+        width  = 24
+        height = 6
+
+        properties = {
+          logGroupName  = aws_cloudwatch_log_group.gas_metrics.name
+          query        = "fields @timestamp, @message | filter @message like /GAS_ESTIMATE/ | stats count() by @timestamp"
+          region       = var.aws_region
+          title        = "Gas Estimate Requests"
+          view         = "table"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 0
+        width  = 12
+        height = 6
+
+        properties = {
+          metrics = [
+            ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", aws_db_instance.postgres.identifier],
+            [".", "DatabaseConnections", ".", "."],
+          ]
+          period = 300
+          stat   = "Average"
+          region = var.aws_region
+          title  = "Database Performance"
+          view   = "timeSeries"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 12
+        width  = 12
+        height = 6
+
+        properties = {
+          metrics = [
+            ["AWS/ApiGateway", "Count", "ApiName", "agenticpay-backend-${var.environment}"],
+            [".", "Latency", ".", "."],
+            [".", "5XXError", ".", "."],
+            [".", "4XXError", ".", "."],
+          ]
+          period = 300
+          stat   = "Sum"
+          region = var.aws_region
+          title  = "API Gateway Metrics"
+          view   = "timeSeries"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 12
+        width  = 12
+        height = 6
+
+        properties = {
+          metrics = [
+            ["AWS/CloudFront", "Requests", "DistributionId", aws_cloudfront_distribution.backend.id],
+            [".", "Latency", ".", "."],
+          ]
+          period = 300
+          stat   = "Sum"
+          region = var.aws_region
+          title  = "CloudFront Backend Metrics"
+          view   = "timeSeries"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 18
+        width  = 12
+        height = 6
+
+        properties = {
+          metrics = [
+            ["AWS/CloudFront", "Requests", "DistributionId", aws_cloudfront_distribution.frontend.id, { stat: "Sum" }],
+            [".", "TotalErrorRate", ".", ".", { stat: "Average" }],
+          ]
+          period = 300
+          stat   = "Sum"
+          region = var.aws_region
+          title  = "Frontend CDN — Request Volume & Error Rate"
+          view   = "timeSeries"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 18
+        width  = 12
+        height = 6
+
+        properties = {
+          metrics = [
+            ["AWS/CloudFront", "CacheHitRate", "DistributionId", aws_cloudfront_distribution.frontend.id, { stat: "Average" }],
+            [".", "OriginLatency", ".", ".", { stat: "p95" }],
+          ]
+          period = 300
+          stat   = "Average"
+          region = var.aws_region
+          title  = "Frontend CDN — Cache Hit Rate & Origin Latency (p95)"
+          view   = "timeSeries"
+        }
+      },
+    ]
+  })
+}
+
+# CloudWatch Alarm for High Gas Estimation Error Rate
+resource "aws_cloudwatch_metric_alarm" "gas_estimation_error_rate" {
+  alarm_name          = "agenticpay-gas-estimation-error-rate-${var.environment}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "5XXError"
+  namespace           = "AWS/AppRunner"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = var.environment == "prod" ? "10" : "50"
+  alarm_description   = "Alert when gas estimation error rate exceeds threshold"
+  alarm_actions       = var.environment == "prod" ? [aws_sns_topic.alerts.arn] : []
+
+  dimensions = {
+    ServiceName = aws_apprunner_service.backend.service_name
+  }
+}
+
+# CloudWatch Alarm for High Database Connection Usage
+resource "aws_cloudwatch_metric_alarm" "db_connection_usage" {
+  alarm_name          = "agenticpay-db-connection-usage-${var.environment}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "DatabaseConnections"
+  namespace           = "AWS/RDS"
+  period              = "300"
+  statistic           = "Average"
+  threshold           = var.db_proxy_max_connections_percent
+  alarm_description   = "Alert when database connection usage exceeds threshold"
+  alarm_actions       = var.environment == "prod" ? [aws_sns_topic.alerts.arn] : []
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.postgres.identifier
+  }
+}
+
+# SNS Topic for Alerts
+resource "aws_sns_topic" "alerts" {
+  name = "agenticpay-alerts-${var.environment}"
+}
+
+resource "aws_sns_topic_subscription" "email_alerts" {
+  count     = var.environment == "prod" && var.alert_email != "" ? 1 : 0
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
 }
