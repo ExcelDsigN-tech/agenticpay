@@ -19,20 +19,30 @@ Thumbs.db
 dist/
 build/
 out/
-
-# Next.js
 .next/
 .vercel
 
 # Debug
 *.log
 npm-debug.log*
+lighthouse/
 yarn-debug.log*
 yarn-error.log*
 
 # Keys
 *.pem
 
+# AI
+# Test snapshots
+*.snap
+*.snap.new
+**/__snapshots__/
+**/snapshots/
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
 # Test artifacts & snapshots
 **/coverage/
 **/__snapshots__/
@@ -51,10 +61,14 @@ security-reports/
 .turbo/
 # Tools
 .claude
+.kilocode/
+
+# Reports
 .lhci_reports/
 bundle-reports/
 trend-data.json
 
+# Generated code
 # Package dist
 packages/*/dist/
 
@@ -67,6 +81,28 @@ node_modules/.cache/
 .claude
 test-write.txt
 
+# Misc
+.claude
+test-write.txt
+
+# Test snapshots and artifacts
+**/__snapshots__/
+**/*.snap
+coverage/
+
+# Rust
+contracts/target/
+contracts/*.wasm
+
+# Docker
+docker-compose.override.yml
+
+# Turbo
+.turbo/
+
+# Misc
+test-write.txt
+AGENTS.md
 # Test snapshots & output
 **/__snapshots__/
 **/e2e/__snapshots__/

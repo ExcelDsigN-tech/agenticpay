@@ -607,3 +607,198 @@ export function generateTaxReport(input: { merchantId: string; from?: string; to
 export function buildInvoicePdf(invoice: InvoiceRecord): Buffer {
   return buildSimplePdf(invoice);
 }
+
+// ── Milestone-Triggered Invoicing (Issue #636) ───────────────────────────────
+
+export type MilestoneTriggerConfig = {
+  projectId: string;
+  merchantId: string;
+  countryCode?: string;
+  presentmentCurrency?: string;
+  autoSend?: boolean;
+  recipientEmail?: string;
+  recipientName?: string;
+};
+
+export type MilestoneInvoiceResult = {
+  invoice: InvoiceRecord;
+  milestoneId: string;
+  projectId: string;
+  triggeredAt: string;
+};
+
+const milestoneTriggers = new Map<string, MilestoneTriggerConfig[]>();
+
+export function registerMilestoneTrigger(config: MilestoneTriggerConfig): void {
+  const triggers = milestoneTriggers.get(config.projectId) ?? [];
+  triggers.push(config);
+  milestoneTriggers.set(config.projectId, triggers);
+}
+
+export function getMilestoneTriggers(projectId: string): MilestoneTriggerConfig[] {
+  return milestoneTriggers.get(projectId) ?? [];
+}
+
+export function removeMilestoneTrigger(projectId: string, merchantId: string): boolean {
+  const triggers = milestoneTriggers.get(projectId);
+  if (!triggers) return false;
+  const filtered = triggers.filter((t) => t.merchantId !== merchantId);
+  if (filtered.length === triggers.length) return false;
+  milestoneTriggers.set(projectId, filtered);
+  return true;
+}
+
+export async function generateInvoiceFromMilestone(
+  milestone: { id: string; title: string; deliverable: string; amount: number },
+  config: MilestoneTriggerConfig,
+): Promise<MilestoneInvoiceResult> {
+  const invoice = await generateInvoice({
+    projectId: config.projectId,
+    merchantId: config.merchantId,
+    workDescription: `Milestone: ${milestone.title} — ${milestone.deliverable}`,
+    hoursWorked: 1,
+    hourlyRate: milestone.amount,
+    countryCode: config.countryCode ?? 'US',
+    presentmentCurrency: config.presentmentCurrency,
+  });
+
+  if (config.autoSend && config.recipientEmail) {
+    await sendInvoiceEmail(invoice.id, config.recipientEmail, config.recipientName).catch(() => {});
+  }
+
+  return {
+    invoice,
+    milestoneId: milestone.id,
+    projectId: config.projectId,
+    triggeredAt: new Date().toISOString(),
+  };
+}
+
+// ── Invoice Analytics (Issue #636) ───────────────────────────────────────────
+
+export type InvoiceStatusTrend = {
+  date: string;
+  status: string;
+  count: number;
+};
+
+export type InvoiceAgingBreakdown = {
+  range: string;
+  count: number;
+  amount: number;
+};
+
+export type InvoiceAnalyticsData = {
+  totalInvoices: number;
+  totalAmount: number;
+  paidAmount: number;
+  overdueAmount: number;
+  draftAmount: number;
+  cancelledAmount: number;
+  sentAmount: number;
+  averageValue: number;
+  statusBreakdown: Record<string, number>;
+  monthlyTrend: Array<{ month: string; count: number; amount: number }>;
+  topMerchants: Array<{ merchantId: string; count: number; total: number }>;
+  statusTrend: InvoiceStatusTrend[];
+  agingBreakdown: InvoiceAgingBreakdown[];
+  generatedAt: string;
+};
+
+export function buildInvoiceAnalytics(merchantId?: string): InvoiceAnalyticsData {
+  const filtered = merchantId
+    ? Array.from(invoices.values()).filter((i) => i.merchantId === merchantId)
+    : Array.from(invoices.values());
+
+  const totalInvoices = filtered.length;
+  const totalAmount = filtered.reduce((s, i) => s + i.total, 0);
+  const paidAmount = filtered.filter((i) => i.status === 'paid').reduce((s, i) => s + i.total, 0);
+  const overdueAmount = filtered.filter((i) => i.status === 'overdue').reduce((s, i) => s + i.total, 0);
+  const draftAmount = filtered.filter((i) => i.status === 'draft').reduce((s, i) => s + i.total, 0);
+  const cancelledAmount = filtered.filter((i) => i.status === 'cancelled').reduce((s, i) => s + i.total, 0);
+  const sentAmount = filtered.filter((i) => i.status === 'sent').reduce((s, i) => s + i.total, 0);
+
+  const statusBreakdown: Record<string, number> = {};
+  for (const inv of filtered) {
+    statusBreakdown[inv.status] = (statusBreakdown[inv.status] || 0) + 1;
+  }
+
+  const monthBuckets = new Map<string, { count: number; amount: number }>();
+  for (const inv of filtered) {
+    const month = inv.createdAt.slice(0, 7);
+    const bucket = monthBuckets.get(month) ?? { count: 0, amount: 0 };
+    bucket.count += 1;
+    bucket.amount += inv.total;
+    monthBuckets.set(month, bucket);
+  }
+
+  const monthlyTrend = Array.from(monthBuckets.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, data]) => ({ month, ...data }));
+
+  const merchantTotals = new Map<string, { count: number; total: number }>();
+  for (const inv of filtered) {
+    const m = merchantTotals.get(inv.merchantId) ?? { count: 0, total: 0 };
+    m.count += 1;
+    m.total += inv.total;
+    merchantTotals.set(inv.merchantId, m);
+  }
+
+  const topMerchants = Array.from(merchantTotals.entries())
+    .map(([merchantId, data]) => ({ merchantId, ...data }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 10);
+
+  const dailyStatus = new Map<string, Map<string, number>>();
+  for (const inv of filtered) {
+    const date = inv.updatedAt.slice(0, 10);
+    if (!dailyStatus.has(date)) dailyStatus.set(date, new Map());
+    const statusMap = dailyStatus.get(date)!;
+    statusMap.set(inv.status, (statusMap.get(inv.status) || 0) + 1);
+  }
+
+  const statusTrend = Array.from(dailyStatus.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .flatMap(([date, statuses]) =>
+      Array.from(statuses.entries()).map(([status, count]) => ({ date, status, count }))
+    );
+
+  const now = Date.now();
+  const agingRanges = [
+    { label: '0-30 days', min: 0, max: 30 },
+    { label: '31-60 days', min: 31, max: 60 },
+    { label: '61-90 days', min: 61, max: 90 },
+    { label: '90+ days', min: 91, max: Infinity },
+  ];
+
+  const agingBreakdown = agingRanges.map((range) => {
+    const matching = filtered.filter((inv) => {
+      if (inv.status === 'paid' || inv.status === 'cancelled') return false;
+      const due = inv.dueDate ? new Date(inv.dueDate).getTime() : new Date(inv.createdAt).getTime();
+      const daysOverdue = Math.floor((now - due) / (1000 * 60 * 60 * 24));
+      return daysOverdue >= range.min && daysOverdue <= range.max;
+    });
+    return {
+      range: range.label,
+      count: matching.length,
+      amount: Math.round(matching.reduce((s, i) => s + i.total, 0) * 100) / 100,
+    };
+  });
+
+  return {
+    totalInvoices,
+    totalAmount: Math.round(totalAmount * 100) / 100,
+    paidAmount: Math.round(paidAmount * 100) / 100,
+    overdueAmount: Math.round(overdueAmount * 100) / 100,
+    draftAmount: Math.round(draftAmount * 100) / 100,
+    cancelledAmount: Math.round(cancelledAmount * 100) / 100,
+    sentAmount: Math.round(sentAmount * 100) / 100,
+    averageValue: totalInvoices > 0 ? Math.round((totalAmount / totalInvoices) * 100) / 100 : 0,
+    statusBreakdown,
+    monthlyTrend,
+    topMerchants,
+    statusTrend,
+    agingBreakdown,
+    generatedAt: new Date().toISOString(),
+  };
+}

@@ -152,6 +152,7 @@ import { refundsEnhancedRouter } from './routes/refunds-enhanced.js';
 import { refundsAutomatedRouter } from './routes/refunds-automated.js';
 import { refundQueue } from './queue/refund-queue.js';
 import { databaseRouter } from './routes/database.js';
+import { contractAuditRouter } from './routes/contract-audit.js';
 import { escalationRouter } from './routes/escalation.js';
 
 // TSOA Controllers for OpenAPI generation
@@ -434,6 +435,9 @@ app.use('/api/v1/projects', projectsRouter);
 
 // Payment categories — Issue #251
 app.use('/api/v1/categories', categoriesRouter);
+
+// Automated contract auditing with security scoring (Issue #634)
+app.use('/api/v1/contract-audit', contractAuditRouter);
 
 // Two-factor authentication
 app.use('/api/v1/auth/2fa', twoFactorAuthRouter);
