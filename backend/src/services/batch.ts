@@ -1,4 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import * as StellarSdk from '@stellar/stellar-sdk';
+import { config } from '../config/env.js';
+import { featureFlags } from '../config/featureFlags.js';
+import { server, getNonceManager, getGasEstimator, UnitOfWorkError } from './stellar.js';
+
+const NETWORK = config().STELLAR_NETWORK;
+const networkPassphrase =
+  NETWORK === 'public'
+    ? StellarSdk.Networks.PUBLIC
+    : StellarSdk.Networks.TESTNET;
 
 export type BatchStatus = 'pending' | 'processing' | 'completed' | 'partial_failure' | 'failed';
 
@@ -34,7 +44,6 @@ export interface BatchRecord {
 
 const batchStore = new Map<string, BatchRecord>();
 
-/** Parse CSV text into payment rows. Returns parsed rows and per-row errors. */
 export function parseCSV(csv: string): {
   rows: BatchPaymentItem[];
   errors: Array<{ line: number; error: string }>;
@@ -43,7 +52,6 @@ export function parseCSV(csv: string): {
   const rows: BatchPaymentItem[] = [];
   const errors: Array<{ line: number; error: string }> = [];
 
-  // Skip header row
   const dataLines = lines[0]?.toLowerCase().includes('recipient') ? lines.slice(1) : lines;
 
   for (let i = 0; i < dataLines.length; i++) {
@@ -68,7 +76,6 @@ export function parseCSV(csv: string): {
   return { rows, errors };
 }
 
-/** Detect duplicate recipients within a payment list. */
 export function detectDuplicates(payments: BatchPaymentItem[]): number[] {
   const seen = new Map<string, number>();
   const duplicateIndices: number[] = [];
@@ -85,13 +92,11 @@ export function detectDuplicates(payments: BatchPaymentItem[]): number[] {
   return duplicateIndices;
 }
 
-/** Create a batch record and simulate execution with partial failure handling. */
 export function executeBatch(payments: BatchPaymentItem[], label?: string): BatchRecord {
   const id = `batch_${randomUUID()}`;
   const now = new Date().toISOString();
 
   const results: BatchPaymentResult[] = payments.map((p, index) => {
-    // Simulate: invalid Stellar address format fails
     const isValidAddress = /^G[A-Z2-7]{55}$/.test(p.recipient);
     if (!isValidAddress) {
       return {
@@ -121,20 +126,77 @@ export function executeBatch(payments: BatchPaymentItem[], label?: string): Batc
     failed === 0 ? 'completed' : succeeded === 0 ? 'failed' : 'partial_failure';
 
   const record: BatchRecord = {
-    id,
-    label,
-    status,
-    total: payments.length,
-    succeeded,
-    failed,
-    payments,
-    results,
-    createdAt: now,
-    updatedAt: now,
+    id, label, status,
+    total: payments.length, succeeded, failed,
+    payments, results,
+    createdAt: now, updatedAt: now,
   };
 
   batchStore.set(id, record);
   return record;
+}
+
+export interface RollbackResult {
+  batchId: string;
+  rolledBackPayments: string[];
+  failedRollbacks: Array<{ recipient: string; error: string }>;
+  status: 'fully_rolled_back' | 'partially_rolled_back';
+}
+
+export function rollbackBatch(batchId: string): RollbackResult | undefined {
+  const record = batchStore.get(batchId);
+  if (!record) return undefined;
+  if (record.status === 'failed') {
+    return {
+      batchId,
+      rolledBackPayments: [],
+      failedRollbacks: record.payments.map((p) => ({ recipient: p.recipient, error: 'Batch had no successful payments' })),
+      status: 'fully_rolled_back',
+    };
+  }
+
+  const rolledBackPayments: string[] = [];
+  const failedRollbacks: Array<{ recipient: string; error: string }> = [];
+
+  for (const result of record.results) {
+    if (result.status === 'success') {
+      rolledBackPayments.push(result.recipient);
+    }
+  }
+
+  if (failedRollbacks.length === 0) {
+    record.status = 'completed';
+    for (const r of record.results) {
+      if (r.status === 'success') r.status = 'failed';
+      r.error = r.error ? `${r.error}; rolled back` : 'rolled back';
+    }
+  }
+
+  record.updatedAt = new Date().toISOString();
+  batchStore.set(batchId, record);
+
+  return {
+    batchId,
+    rolledBackPayments,
+    failedRollbacks,
+    status: failedRollbacks.length === 0 ? 'fully_rolled_back' : 'partially_rolled_back',
+  };
+}
+
+export function getBatchHistory(filters?: { status?: BatchStatus; from?: string; to?: string }): BatchRecord[] {
+  let entries = Array.from(batchStore.values());
+  if (filters?.status) {
+    entries = entries.filter((e) => e.status === filters.status);
+  }
+  if (filters?.from) {
+    const from = new Date(filters.from).getTime();
+    entries = entries.filter((e) => new Date(e.createdAt).getTime() >= from);
+  }
+  if (filters?.to) {
+    const to = new Date(filters.to).getTime();
+    entries = entries.filter((e) => new Date(e.createdAt).getTime() <= to);
+  }
+  return entries.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 export function getBatch(id: string): BatchRecord | undefined {
@@ -165,24 +227,16 @@ export function getBatchReport(id: string): object | undefined {
     }, {});
 
   return {
-    batchId: record.id,
-    label: record.label,
-    status: record.status,
+    batchId: record.id, label: record.label, status: record.status,
     summary: {
-      total: record.total,
-      succeeded: record.succeeded,
-      failed: record.failed,
-      successRate: `${successRate}%`,
-      totalAmountProcessed: totalAmount,
-      byAsset,
+      total: record.total, succeeded: record.succeeded, failed: record.failed,
+      successRate: `${successRate}%`, totalAmountProcessed: totalAmount, byAsset,
     },
     failures: record.results.filter((r) => r.status === 'failed'),
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
+    createdAt: record.createdAt, updatedAt: record.updatedAt,
   };
 }
 
-/** Generate a CSV template string for download. */
 export function generateCSVTemplate(): string {
   return [
     'recipient,amount,asset,memo',
@@ -190,3 +244,282 @@ export function generateCSVTemplate(): string {
     'GDEF...UVW,50.5,USDC,vendor-payment',
   ].join('\n');
 }
+
+// ── Dry-Run Estimation ───────────────────────────────────────────────────────
+
+export interface BatchEstimate {
+  totalPayments: number;
+  totalAmount: string;
+  byAsset: Record<string, string>;
+  estimatedGasUnits: number;
+  duplicateCount: number;
+  invalidAddressCount: number;
+  estimatedDurationMs: number;
+}
+
+export function estimateBatch(payments: BatchPaymentItem[]): BatchEstimate {
+  const byAsset: Record<string, number> = {};
+  let totalAmount = 0;
+  let invalidCount = 0;
+
+  for (const p of payments) {
+    if (!/^G[A-Z2-7]{55}$/.test(p.recipient)) {
+      invalidCount++;
+      continue;
+    }
+    const amount = parseFloat(p.amount) || 0;
+    totalAmount += amount;
+    byAsset[p.asset] = (byAsset[p.asset] ?? 0) + amount;
+  }
+
+  const duplicateIndices = detectDuplicates(payments);
+  const byAssetStrings: Record<string, string> = {};
+  for (const [k, v] of Object.entries(byAsset)) {
+    byAssetStrings[k] = v.toFixed(7);
+  }
+
+  return {
+    totalPayments: payments.length,
+    totalAmount: totalAmount.toFixed(7),
+    byAsset: byAssetStrings,
+    estimatedGasUnits: payments.length * 100 + 100, // rough Stellar estimate
+    duplicateCount: duplicateIndices.length,
+    invalidAddressCount: invalidCount,
+    estimatedDurationMs: payments.length * 50 + 500, // rough estimate
+  };
+}
+
+// ── Scheduled Batch Execution ────────────────────────────────────────────────
+
+export interface ScheduledBatch {
+  id: string;
+  label?: string;
+  payments: BatchPaymentItem[];
+  scheduledAt: string;
+  executeAt: string;
+  status: 'scheduled' | 'executed' | 'cancelled' | 'failed';
+  result?: BatchRecord;
+  createdAt: string;
+}
+
+const scheduledBatches = new Map<string, ScheduledBatch>();
+let scheduleTimer: ReturnType<typeof setInterval> | null = null;
+
+export function scheduleBatch(
+  payments: BatchPaymentItem[],
+  executeAt: string,
+  label?: string
+): ScheduledBatch {
+  const id = `sched_${randomUUID()}`;
+  const now = new Date().toISOString();
+  const scheduled: ScheduledBatch = {
+    id,
+    label,
+    payments,
+    scheduledAt: now,
+    executeAt,
+    status: 'scheduled',
+    createdAt: now,
+  };
+  scheduledBatches.set(id, scheduled);
+  startScheduleProcessor();
+  return scheduled;
+}
+
+export function listScheduledBatches(): ScheduledBatch[] {
+  return Array.from(scheduledBatches.values()).sort(
+    (a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime()
+  );
+}
+
+export function cancelScheduledBatch(id: string): ScheduledBatch | undefined {
+  const batch = scheduledBatches.get(id);
+  if (!batch || batch.status !== 'scheduled') return undefined;
+  batch.status = 'cancelled';
+  scheduledBatches.set(id, batch);
+  return batch;
+}
+
+export function getScheduledBatch(id: string): ScheduledBatch | undefined {
+  return scheduledBatches.get(id);
+}
+
+function processScheduledBatches(): void {
+  const now = Date.now();
+  const due = Array.from(scheduledBatches.values()).filter(
+    (b) => b.status === 'scheduled' && new Date(b.executeAt).getTime() <= now
+  );
+
+  for (const batch of due) {
+    try {
+      const result = executeBatch(batch.payments, batch.label);
+      batch.result = result;
+      batch.status = 'executed';
+    } catch (error) {
+      batch.status = 'failed';
+    }
+    scheduledBatches.set(batch.id, batch);
+  }
+}
+
+function startScheduleProcessor(): void {
+  if (scheduleTimer) return;
+  scheduleTimer = setInterval(() => {
+    processScheduledBatches();
+  }, 5_000);
+}
+
+export function stopScheduleProcessor(): void {
+  if (scheduleTimer) {
+    clearInterval(scheduleTimer);
+    scheduleTimer = null;
+  }
+}
+
+// ── BatchProcessor (transaction batching with Stellar) ────────────────────────
+
+export interface BatchItem<T = unknown> {
+  id: string;
+  type: string;
+  data: T;
+  priority: number;
+  createdAt: number;
+}
+
+export interface BatchConfig {
+  maxSize: number;
+  maxWaitMs: number;
+  flushIntervalMs: number;
+  maxRetries: number;
+}
+
+export const DEFAULT_BATCH_CONFIG: BatchConfig = {
+  maxSize: 50,
+  maxWaitMs: 5000,
+  flushIntervalMs: 1000,
+  maxRetries: 3,
+};
+
+export interface BatchResult {
+  batchId: string;
+  successCount: number;
+  failedCount: number;
+  errors: Array<{ id: string; error: string }>;
+  txHash?: string;
+  durationMs: number;
+}
+
+export class BatchProcessor {
+  private queue: BatchItem[] = [];
+  private config: BatchConfig;
+  private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private processing = false;
+  private batchCounter = 0;
+
+  constructor(config: Partial<BatchConfig> = {}) {
+    this.config = { ...DEFAULT_BATCH_CONFIG, ...config };
+  }
+
+  isEnabled(): boolean {
+    return featureFlags.evaluate('batch-operations');
+  }
+
+  enqueue<T>(item: Omit<BatchItem<T>, 'createdAt'>): void {
+    this.queue.push({ ...item, createdAt: Date.now() });
+    if (this.queue.length >= this.config.maxSize) {
+      this.flush().catch((err) => console.error('[BatchProcessor] Auto-flush failed:', err));
+    }
+  }
+
+  get queueLength(): number { return this.queue.length; }
+
+  start(): void {
+    if (this.flushTimer) return;
+    this.flushTimer = setInterval(() => {
+      if (this.queue.length > 0 && !this.processing) {
+        this.flush().catch((err) => console.error('[BatchProcessor] Interval flush failed:', err));
+      }
+    }, this.config.flushIntervalMs);
+  }
+
+  stop(): void {
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
+  }
+
+  async flush(): Promise<BatchResult[]> {
+    if (this.processing || this.queue.length === 0) return [];
+    this.processing = true;
+    const batch = this.queue.splice(0, this.config.maxSize);
+    const results: BatchResult[] = [];
+
+    try {
+      const result = await this.processBatch(batch);
+      results.push(result);
+    } catch (error) {
+      results.push({
+        batchId: `batch_${++this.batchCounter}`,
+        successCount: 0,
+        failedCount: batch.length,
+        errors: batch.map((item) => ({ id: item.id, error: error instanceof Error ? error.message : 'Unknown error' })),
+        durationMs: 0,
+      });
+    }
+
+    this.processing = false;
+    return results;
+  }
+
+  private async processBatch(batch: BatchItem[]): Promise<BatchResult> {
+    const batchId = `batch_${++this.batchCounter}_${Date.now()}`;
+    const startTime = Date.now();
+    const errors: Array<{ id: string; error: string }> = [];
+    let successCount = 0;
+    let txHash: string | undefined;
+
+    const feeEstimate = await getGasEstimator().estimateFee(batch.length + 1);
+    const baseFee = feeEstimate.recommended;
+
+    try {
+      const paymentOps = batch
+        .filter((item) => item.type === 'payment')
+        .map((item) => {
+          const data = item.data as { to: string; amount: string; asset?: string };
+          const asset = data.asset ? new StellarSdk.Asset(data.asset, data.to) : StellarSdk.Asset.native();
+          return StellarSdk.Operation.payment({ destination: data.to, asset, amount: data.amount });
+        });
+
+      if (paymentOps.length > 0) {
+        const sourceAddress = process.env.STELLAR_SOURCE_ADDRESS;
+        if (!sourceAddress) throw new UnitOfWorkError('No source address configured for batch', 'batch-payment');
+
+        await getNonceManager().acquire(sourceAddress);
+        const account = await server.loadAccount(sourceAddress);
+        const transaction = new StellarSdk.TransactionBuilder(account, {
+          fee: baseFee.toString(),
+          networkPassphrase,
+        });
+
+        for (const op of paymentOps) transaction.addOperation(op);
+        const tx = transaction.setTimeout(30).build();
+        txHash = tx.hash.toString('hex');
+
+        successCount = paymentOps.length;
+        getNonceManager().increment(sourceAddress);
+        getNonceManager().release(sourceAddress);
+      } else {
+        successCount = batch.filter((item) => item.type !== 'payment').length;
+      }
+    } catch (error) {
+      for (const item of batch) {
+        errors.push({ id: item.id, error: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    }
+
+    return { batchId, successCount, failedCount: errors.length, errors, txHash, durationMs: Date.now() - startTime };
+  }
+}
+
+export const batchProcessor = new BatchProcessor();

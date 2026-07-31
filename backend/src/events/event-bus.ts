@@ -1,0 +1,84 @@
+import type { DomainEventType, EventHandler, StoredEvent } from './event-types.js';
+import type { AgenticPayWebSocketServer } from '../websocket/server.js';
+import { addToDeadLetterQueue } from './dead-letter-queue.js';
+import { eventSchemaRegistry } from './schemas/index.js';
+
+type WildcardHandler = (event: StoredEvent) => void | Promise<void>;
+
+const handlers = new Map<string, Set<EventHandler>>();
+let wildcardHandlers: Set<WildcardHandler> = new Set();
+let websocketServer: AgenticPayWebSocketServer | undefined;
+
+const channelByEventPrefix: Array<{ prefix: string; channel: string }> = [
+  { prefix: 'payment.', channel: 'payment.events' },
+  { prefix: 'dispute.', channel: 'dispute.updates' },
+  { prefix: 'project.disputed', channel: 'dispute.updates' },
+];
+
+export function bindWebSocketServer(server: AgenticPayWebSocketServer): void {
+  websocketServer = server;
+}
+
+export function subscribe<T = unknown>(type: DomainEventType, handler: EventHandler<T>): () => void {
+  const set = handlers.get(type) ?? new Set<EventHandler>();
+  set.add(handler as EventHandler);
+  handlers.set(type, set);
+  return () => {
+    set.delete(handler as EventHandler);
+  };
+}
+
+export function subscribeAll(handler: WildcardHandler): () => void {
+  wildcardHandlers.add(handler);
+  return () => wildcardHandlers.delete(handler);
+}
+
+async function invokeHandler(
+  handler: (event: StoredEvent) => void | Promise<void>,
+  event: StoredEvent
+): Promise<void> {
+  try {
+    await handler(event);
+  } catch (err) {
+    addToDeadLetterQueue(event, handler.name || 'anonymous', err);
+    console.error(`[event-bus] Handler "${handler.name || 'anonymous'}" failed for event "${event.type}":`, err);
+  }
+}
+
+export async function publish(event: StoredEvent): Promise<void> {
+  // Validate event payload against schema
+  if (eventSchemaRegistry.hasSchema(event.type)) {
+    const validation = eventSchemaRegistry.safeValidate(event.type, event.payload);
+    if (!validation.success) {
+      const error = validation.error;
+      console.error(`[event-bus] Schema validation failed for event "${event.type}":`, error.errors);
+      throw new Error(`Event schema validation failed for ${event.type}: ${error.errors.map(e => e.message).join(', ')}`);
+    }
+  } else {
+    console.warn(`[event-bus] No schema registered for event type: ${event.type}. Skipping validation.`);
+  }
+
+  const typed = handlers.get(event.type);
+  if (typed) {
+    await Promise.all(Array.from(typed).map((h) => invokeHandler(h, event)));
+  }
+
+  if (wildcardHandlers.size > 0) {
+    await Promise.all(Array.from(wildcardHandlers).map((h) => invokeHandler(h, event)));
+  }
+
+  const channel = channelByEventPrefix.find(({ prefix }) => event.type.startsWith(prefix))?.channel;
+  if (channel) {
+    websocketServer?.broadcastToChannel(channel, {
+      type: event.type,
+      payload: event,
+      priority: channel === 'dispute.updates' ? 'high' : 'normal',
+    });
+  }
+}
+
+export function clearHandlers(): void {
+  handlers.clear();
+  wildcardHandlers = new Set();
+  websocketServer = undefined;
+}

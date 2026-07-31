@@ -4,7 +4,8 @@ import sanitizeHtml from 'sanitize-html';
 import validator from 'validator';
 import xss from 'xss';
 import escape from 'escape-html';
-import SQLString from 'sqlstring';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const SQLString = require('sqlstring');
 
 /**
  * Input Sanitization Middleware
@@ -20,6 +21,11 @@ export interface SanitizeOptions {
   xssProtection?: boolean;
   htmlSanitization?: boolean;
   escapeHtml?: boolean;
+
+  // NoSQL injection prevention
+  nosqlSanitize?: boolean;
+  normalizeUnicode?: boolean;
+  maxJsonDepth?: number;
   
   // Input validation
   validateEmail?: boolean;
@@ -53,6 +59,9 @@ export class InputSanitizer {
       xssProtection: true,
       htmlSanitization: true,
       escapeHtml: true,
+      nosqlSanitize: true,
+      normalizeUnicode: true,
+      maxJsonDepth: 12,
       validateEmail: true,
       validateUrl: true,
       validateNumeric: true,
@@ -67,17 +76,42 @@ export class InputSanitizer {
     } else if (Array.isArray(input)) {
       return input.map(item => this.sanitize(item, finalOptions));
     } else if (typeof input === 'object' && input !== null) {
-      return this.sanitizeObject(input, finalOptions);
+      return this.sanitizeObject(input, finalOptions, 0, finalOptions.maxJsonDepth ?? 12);
     }
 
     return input;
   }
 
   /**
+   * Strip Mongo-style operator keys and normalize Unicode in untrusted input.
+   */
+  private sanitizeNoSql(value: unknown): unknown {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.sanitizeNoSql(item));
+    }
+
+    if (typeof value === 'object' && value !== null) {
+      const sanitized: Record<string, unknown> = {};
+      for (const [key, nested] of Object.entries(value)) {
+        if (key.startsWith('$')) continue;
+        const safeKey = key.replace(/[^a-zA-Z0-9_.-]/g, '');
+        sanitized[safeKey] = this.sanitizeNoSql(nested);
+      }
+      return sanitized;
+    }
+
+    return value;
+  }
+
+  private normalizeUnicode(input: string): string {
+    return input.normalize('NFKC');
+  }
+
+  /**
    * Sanitize string values
    */
   private sanitizeString(input: string, options: SanitizeOptions): string {
-    let sanitized = input;
+    let sanitized = options.normalizeUnicode ? this.normalizeUnicode(input) : input;
 
     // SQL Injection Prevention
     if (options.sqlEscape) {
@@ -117,11 +151,15 @@ export class InputSanitizer {
   /**
    * Sanitize object values recursively
    */
-  private sanitizeObject(obj: any, options: SanitizeOptions): any {
+  private sanitizeObject(obj: any, options: SanitizeOptions, depth = 0, maxDepth = 12): any {
+    if (depth > maxDepth) {
+      throw new Error('JSON depth limit exceeded');
+    }
+
+    const working = options.nosqlSanitize ? this.sanitizeNoSql(obj) : obj;
     const sanitized: any = {};
 
-    for (const [key, value] of Object.entries(obj)) {
-      // Sanitize key names to prevent key injection
+    for (const [key, value] of Object.entries(working)) {
       const sanitizedKey = this.sanitizeKey(key);
       
       if (value === null || value === undefined) {
@@ -131,7 +169,7 @@ export class InputSanitizer {
       } else if (Array.isArray(value)) {
         sanitized[sanitizedKey] = value.map(item => this.sanitize(item, options));
       } else if (typeof value === 'object') {
-        sanitized[sanitizedKey] = this.sanitizeObject(value, options);
+        sanitized[sanitizedKey] = this.sanitizeObject(value, options, depth + 1, maxDepth);
       } else {
         sanitized[sanitizedKey] = value;
       }
@@ -187,7 +225,7 @@ export class InputSanitizer {
     if (!validator.isURL(url, { protocols: ['http', 'https'] })) {
       return null;
     }
-    return validator.normalizeUrl(url);
+    return url;
   }
 
   /**
@@ -257,8 +295,8 @@ export const sanitizeInput = (options: SanitizeOptions = {}) => {
     } catch (error) {
       console.error('Sanitization error:', error);
       res.status(400).json({
-        error: 'Invalid input detected',
-        message: 'Request contains malicious or malformed input'
+        error: 'INVALID_INPUT',
+        message: 'Request contains invalid or unsupported input',
       });
     }
   };
@@ -320,9 +358,8 @@ export const validateInput = (schema: any) => {
     } catch (error) {
       console.error('Validation error:', error);
       res.status(400).json({
-        error: 'Validation failed',
+        error: 'VALIDATION_FAILED',
         message: 'Input does not match required format',
-        details: error.errors
       });
     }
   };

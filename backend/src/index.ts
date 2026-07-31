@@ -2,9 +2,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
 import compression from 'compression';
-import { config } from './config.js';
 import { verificationRouter } from './routes/verification.js';
 import { invoiceRouter } from './routes/invoice.js';
 import { stellarRouter } from './routes/stellar.js';
@@ -13,10 +13,6 @@ import { jobsRouter } from './routes/jobs.js';
 import { healthRouter } from './routes/health.js';
 import { queueRouter } from './routes/queue.js';
 import { slaRouter } from './routes/sla.js';
-import { legacyRouter } from './routes/legacy.js';
-import { splitsRouter } from './routes/splits.js';
-import { refundsRouter } from './routes/refunds.js';
-import { allowancesRouter } from './routes/allowances.js';
 import { startJobs, getJobScheduler } from './jobs/index.js';
 import { errorHandler, notFoundHandler, AppError } from './middleware/errorHandler.js';
 import { messageQueue } from './services/queue.js';
@@ -24,6 +20,7 @@ import { registerDefaultProcessors } from './services/queue-producers.js';
 import { slaTrackingMiddleware } from './middleware/slaTracking.js';
 import { requestIdMiddleware, REQUEST_ID_HEADER } from './middleware/requestId.js';
 import { validateEnv, config as getConfig } from './config/env.js';
+import { config } from './config.js';
 import { flagsRouter } from './routes/flags.js';
 import { kybRouter } from './routes/kyb.js';
 import { batchRouter } from './routes/batch.js';
@@ -39,16 +36,7 @@ import { sanitizeInput, contentSecurityPolicy } from './middleware/sanitize.js';
 import { notificationsRouter } from './routes/notifications.js';
 import { auditRouter } from './routes/audit.js';
 
-// Validate environment variables at startup
-validateEnv();
-const env = getConfig();
-
-// Initialize IP allowlist from environment
-if (env.IP_ALLOWLIST_ENABLED || env.IP_ALLOWLIST) {
-  const allowedIps = env.IP_ALLOWLIST ? env.IP_ALLOWLIST.split(',').map(ip => ip.trim()).filter(Boolean) : [];
-  initIpAllowlist(allowedIps, env.IP_ALLOWLIST_ENABLED);
-  console.log(`[IP Allowlist] Enabled with ${allowedIps.length} IP(s)`);
-}
+dotenv.config();
 
 const traceStorage = new AsyncLocalStorage<string>();
 
@@ -173,7 +161,6 @@ app.use(
   })
 );
 app.use(express.json());
-app.use(express.text({ type: ['text/csv', 'text/plain'] }));
 
 app.use(
   compression({
@@ -196,39 +183,52 @@ app.use(
 
 app.use(requestIdMiddleware);
 
+// Trace ID middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
   const traceId = (req.headers['x-trace-id'] as string) || randomUUID();
   res.setHeader('X-Trace-Id', traceId);
 
   traceStorage.run(traceId, () => {
-    console.log(`${req.method} ${req.url} [RequestID: ${req.requestId}] - Started`);
+    console.log(`${req.method} ${req.url} - Started`);
 
     res.on('finish', () => {
-      console.log(`${req.method} ${req.url} [RequestID: ${req.requestId}] - Finished with status ${res.statusCode}`);
+      console.log(`${req.method} ${req.url} - Finished with status ${res.statusCode}`);
     });
 
     next();
   });
 });
 
+// SLA Tracking middleware
 app.use(slaTrackingMiddleware);
 
+// Cache defaults:
+//   - GET/HEAD: individual routes apply cacheControl() with per-route TTLs.
+//   - All other methods: always no-store (mutations must never be cached).
 app.use((req: Request, res: Response, next: NextFunction) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.setHeader('Cache-Control', 'no-store');
   }
+  // Vary on Accept-Encoding so compressed/uncompressed responses are cached separately
   res.setHeader('Vary', 'Accept-Encoding');
   next();
 });
 
+// Health & Readiness checks
 app.use(healthRouter);
 
 import { versionMiddleware } from './middleware/versioning.js';
 
+import { portfolioRouter } from './routes/portfolio.js';
+import { emailRouter } from './routes/email.js';
+
+// Apply tiered limiter to all API routes
 app.use('/api/', tieredRateLimit);
 
+// Versioning middleware
 app.use('/api/', versionMiddleware);
 
+// Define API v1 Router
 const apiV1Router = express.Router();
 apiV1Router.use('/verification', verificationRouter);
 apiV1Router.use('/invoice', invoiceLimiter, invoiceRouter);
@@ -258,14 +258,10 @@ apiV1Router.use('/push', pushRouter);
 // Stripe card payments
 apiV1Router.use('/stripe', stripeRouter);
 
-app.use('/api/v1', ipAllowlistMiddleware(), apiV1Router);
+// Explicit URL-based mounting
+app.use('/api/v1', apiV1Router);
 
-// Notification system routes
-app.use('/api/v1/notifications', notificationsRouter);
-
-// Audit logging routes
-app.use('/api/v1/audit', auditRouter);
-
+// Header-based or fallback mounting
 app.use('/api', (req: Request, res: Response, next: NextFunction) => {
   if (req.path.startsWith('/v1/')) {
     return next();
@@ -274,7 +270,7 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
   if (req.apiVersion === 'v1') {
     return apiV1Router(req, res, next);
   }
-
+  
   next(new AppError(404, `API Version ${req.apiVersion} is not supported`, 'UNSUPPORTED_API_VERSION'));
 });
 
@@ -294,6 +290,7 @@ const server = app.listen(config.server.port, () => {
   console.log(`AgenticPay backend running on port ${config.server.port} [${config.env}]`);
 });
 
+// Graceful shutdown
 const shutdown = (signal: string) => {
   console.log(`${signal} received. Starting graceful shutdown...`);
 

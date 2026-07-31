@@ -50,16 +50,34 @@ Express.js API server providing:
 - `PATCH /api/v1/verification/batch`
 - `DELETE /api/v1/verification/batch`
 
+### Subscription Endpoints
+
+- `POST /api/v1/plans` - Create a subscription plan (Daily, Weekly, Monthly, Yearly)
+- `GET /api/v1/plans/:merchantId` - Retrieve plans for a specific merchant
+- `POST /api/v1/subscriptions/enroll` - Enroll a customer in a plan
+- `DELETE /api/v1/subscriptions/:id` - Cancel an active subscription
+
 ## Features
 
 - **Instant Payments** — Funds released immediately upon work approval via Soroban
 - **Blockchain Escrow** — Smart contract holds funds securely until milestones are met
+- **Subscription Engine** — Automated recurring payments for SaaS, payroll, and retainers
 - **Social & Wallet Login** — Connect via Google/Twitter or Freighter wallet
 - **AI Verification** — Automated code review against project specifications
 - **Milestone Tracking** — Track project progress with clear status updates
 - **Invoice Management** — Auto-generated invoices for completed projects
+- **Two-Factor Authentication** — TOTP-based 2FA using authenticator apps with backup codes for account security
 
 ---
+
+## Devcontainer (recommended)
+
+For one-click setup with Node.js, Rust, Soroban CLI, Postgres, and Redis, see [docs/DEVCONTAINER.md](docs/DEVCONTAINER.md).
+
+```bash
+# Or start only backend services on the host:
+docker compose up -d
+```
 
 ## Prerequisites
 
