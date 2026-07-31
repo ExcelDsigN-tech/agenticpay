@@ -5,9 +5,6 @@
 import {
   createClient,
   RedisClientType,
-  RedisFunctions,
-  RedisModules,
-  RedisScripts,
 } from "redis";
 
 export interface ClusterNode {

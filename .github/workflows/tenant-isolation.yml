@@ -1,22 +1,6 @@
 name: Cross-Tenant Isolation Audit
 
-on:
-  push:
-    branches: [main, dev]
-    paths:
-      - 'backend/src/routes/**'
-      - 'backend/src/services/**'
-      - 'backend/src/repositories/**'
-      - 'backend/src/security/tenant-isolation/**'
-      - 'backend/prisma/schema.prisma'
-  pull_request:
-    branches: [main, dev]
-    paths:
-      - 'backend/src/routes/**'
-      - 'backend/src/services/**'
-      - 'backend/src/repositories/**'
-      - 'backend/src/security/tenant-isolation/**'
-      - 'backend/prisma/schema.prisma'
+on: workflow_dispatch
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

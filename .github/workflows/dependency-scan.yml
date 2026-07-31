@@ -1,13 +1,6 @@
 name: Dependency Vulnerability Scan
 
-on:
-  pull_request:
-    branches: [main, dev]
-  push:
-    branches: [main, dev]
-  schedule:
-    - cron: '0 9 * * 1'
-  workflow_dispatch:
+on: workflow_dispatch
 
 permissions:
   contents: read

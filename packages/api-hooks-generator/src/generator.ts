@@ -155,7 +155,7 @@ function generateEndpointFile(
     lines.push('}');
   } else {
     lines.push(`export function ${hookName}(`);
-    lines.push('  options?: Omit<Parameters<typeof useMutation<${responseType}, Error, ${hasBody ? requestType : 'void'}>>[0], "mutationFn">,');
+    lines.push(`  options?: Omit<Parameters<typeof useMutation<${responseType}, Error, ${hasBody ? requestType : 'void'}>>[0], "mutationFn">,`);
     lines.push(') {');
     lines.push('  const queryClient = useQueryClient();');
     lines.push('  return useMutation({');

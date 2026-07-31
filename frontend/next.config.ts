@@ -1,12 +1,16 @@
 import type { NextConfig } from "next";
 import withBundleAnalyzer from "@next/bundle-analyzer";
 import { withSentryConfig } from "@sentry/nextjs";
+import createNextIntlPlugin from "next-intl/plugin";
+
+const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 
 const bundleAnalyzer = withBundleAnalyzer({
   enabled: process.env.ANALYZE === "true",
 });
 
 const nextConfig: NextConfig = {
+  assetPrefix: process.env.NEXT_PUBLIC_CDN_URL || undefined,
   experimental: {
     optimizePackageImports: [
       "lucide-react",
@@ -46,21 +50,63 @@ const nextConfig: NextConfig = {
           dashboard: {
             name: "route-dashboard",
             chunks: "async",
-            test: /[\\/]app[\\/]dashboard[\\/]/,
+            test: /[\\/]app[\\/](\[locale\][\\/])?dashboard[\\/]/,
             priority: 60,
             enforce: true,
           },
           auth: {
             name: "route-auth",
             chunks: "async",
-            test: /[\\/]app[\\/]auth[\\/]/,
+            test: /[\\/]app[\\/](\[locale\][\\/])?auth[\\/]/,
             priority: 60,
             enforce: true,
           },
           forms: {
             name: "route-forms",
             chunks: "async",
-            test: /[\\/]app[\\/]forms[\\/]/,
+            test: /[\\/]app[\\/](\[locale\][\\/])?forms[\\/]/,
+            priority: 60,
+            enforce: true,
+          },
+          admin: {
+            name: "route-admin",
+            chunks: "async",
+            test: /[\\/]app[\\/]admin[\\/]/,
+            priority: 60,
+            enforce: true,
+          },
+          payments: {
+            name: "route-payments",
+            chunks: "async",
+            test: /[\\/]app[\\/](\[locale\][\\/])?payments[\\/]/,
+            priority: 60,
+            enforce: true,
+          },
+          security: {
+            name: "route-security",
+            chunks: "async",
+            test: /[\\/]app[\\/](\[locale\][\\/])?security[\\/]/,
+            priority: 60,
+            enforce: true,
+          },
+          onboarding: {
+            name: "route-onboarding",
+            chunks: "async",
+            test: /[\\/]app[\\/](\[locale\][\\/])?onboarding[\\/]/,
+            priority: 60,
+            enforce: true,
+          },
+          logs: {
+            name: "route-logs",
+            chunks: "async",
+            test: /[\\/]app[\\/](\[locale\][\\/])?logs[\\/]/,
+            priority: 60,
+            enforce: true,
+          },
+          accessibility: {
+            name: "route-accessibility",
+            chunks: "async",
+            test: /[\\/]app[\\/](\[locale\][\\/])?accessibility[\\/]/,
             priority: 60,
             enforce: true,
           },
@@ -248,7 +294,7 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withSentryConfig(bundleAnalyzer(nextConfig), {
+export default withSentryConfig(bundleAnalyzer(withNextIntl(nextConfig)), {
   silent: true,
   org: process.env.SENTRY_ORG || "agenticpay",
   project: process.env.SENTRY_PROJECT || "agenticpay-frontend",

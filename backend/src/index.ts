@@ -6,6 +6,8 @@ import { tokenBucketRateLimit } from './middleware/rate-limit.js';
 import { apiExpressRateLimit } from './middleware/express-api-rate-limit.js';
 import { slidingWindowRateLimit } from './middleware/sliding-window-rate-limit.js';
 import { compressionMiddleware, getCompressionMetrics } from './middleware/compression.js';
+import { paginationMiddleware, etagMiddleware } from './middleware/pagination.js';
+import { poolMonitorRouter } from './routes/pool-monitor.js';
 import { poolMetrics } from './config/database.js';
 import { config } from './config.js';
 import { versionMiddleware } from './middleware/versioning.js';
@@ -20,6 +22,8 @@ import { queueRouter } from './routes/queue.js';
 import { slaRouter } from './routes/sla.js';
 import { legacyRouter } from './routes/legacy.js';
 import { onboardingRouter } from './routes/onboarding.js';
+import { roleOnboardingRouter } from './routes/role-onboarding.js';
+import { paymentMethodsRouter } from './routes/payment-methods.js';
 import { splitsRouter } from './routes/splits.js';
 import { refundsRouter } from './routes/refunds.js';
 import allowancesRouter from './routes/allowances.js';
@@ -41,9 +45,13 @@ import { cacheControlNoStore } from './middleware/cache-control.js';
 import { httpLogger, correlationMiddleware } from './middleware/logger.js';
 import { validateEnv, config as getConfig } from './config/env.js';
 import { flagsRouter } from './routes/flags.js';
+import { featureFlagsRouter } from './routes/featureFlags.js';
 import { emailRouter } from './routes/email.js';
 import { portfolioRouter } from './routes/portfolio.js';
 import { backupRouter } from './routes/backup.js';
+import { archivalRouter } from './routes/archival.js';
+import { upgradeValidatorRouter } from './routes/upgrade-validator.js';
+import { bridgeMonitorRouter } from './routes/bridge-monitor.js';
 import { pushRouter } from './routes/push.js';
 import { ipAllowlistRouter } from './routes/ip-allowlist.js';
 import { nfcRouter } from './routes/nfc.js';
@@ -72,8 +80,10 @@ import { escrowRouter } from './routes/escrow.js';
 import { multisigRouter } from './routes/multisig.js';
 import { fiatPaymentsRouter } from './routes/fiat-payments.js';
 import { paymentLinksRouter } from './routes/payment-links.js';
+import { paymentStrategiesRouter } from './routes/payment-strategies.js';
 import { taxRouter } from './routes/tax.js';
 import { projectsRouter } from './routes/projects.js';
+import { projectArchivalRouter } from './routes/project-archival.js';
 import { graphQLRouter, graphQLWsRouter } from './graphql/gateway.js';
 import { fraudDetectionRouter } from './routes/fraud-detection.js';
 import { bridgeRouter } from './routes/bridge.js';
@@ -88,6 +98,7 @@ import { createAnalyticsRouter } from './routes/analytics.js';
 import { paymentQueue } from './queue/payment-queue.js';
 import './events/projections.js';
 import { stripeRouter } from './routes/stripe.js';
+import subscriptionsRouter from './routes/subscriptions.js';
 import { SecurityMiddleware, SecurityMonitor } from './middleware/security.js';
 import { sanitizeInput, contentSecurityPolicy } from './middleware/sanitize.js';
 import { requestSizeLimit } from './middleware/request-size-limit.js';
@@ -111,7 +122,48 @@ import devDevRouter from './routes/dev/reload.js';
 import { sessionsRouter } from './routes/sessions.js';
 import { pluginsRouter } from './routes/plugins.js';
 import { outboxRouter } from './routes/outbox.js';
+import { pauseManagerRouter } from './routes/pause-manager.js';
+import { streamingExportRouter } from './routes/streaming-export.js';
 import { startOutboxPublisher, stopOutboxPublisher } from './outbox/index.js';
+import { gasRouter } from './routes/gas.js';
+import { paymentReconciliationRouter } from './routes/payment-reconciliation.js';
+import { disputeResolutionRouter } from './routes/dispute-resolution.js';
+import { runScheduledDisputeEscalations } from './services/dispute-resolution/index.js';
+import { fxRouter } from './routes/fx.js';
+import { cohortAnalyticsRouter } from './routes/cohort-analytics.js';
+import { vaultsRouter } from './routes/vaults.js';
+import { createConnectionManager } from './websocket/connection-manager.js';
+import { getBridgeMonitorService } from './services/bridge-monitor/bridge-monitor.js';
+import { swapsRouter } from './routes/swaps.js';
+import { treasuryRouter } from './routes/treasury.js';
+import { apiKeysRouter } from './routes/api-keys.js';
+import { reportsRouter } from './routes/reports.js';
+import { reconciliationRouter } from './routes/reconciliation.js';
+import { liquidityProtectionRouter } from './routes/liquidity-protection.js';
+import { bulkPaymentsRouter } from './routes/bulk-payments.js';
+import { feesRouter } from './routes/fees.js';
+import { apiUsageTracker, checkQuota } from './middleware/api-usage-tracker.js';
+import indexerRouter from './routes/indexer.js';
+import aiRoutingRouter from './routes/ai-routing.js';
+import piiRouter from './routes/pii.js';
+import { piiRedactionMiddleware } from './middleware/pii-redaction.js';
+import { reorgRouter } from './routes/reorg.js';
+import { getReorgDetector } from './services/chain/reorg-detector.js';
+import { featureFlagRegistry } from './services/featureFlagRegistry.js';
+import { workspacesRouter } from './routes/workspaces.js';
+import { refundsEnhancedRouter } from './routes/refunds-enhanced.js';
+import { refundsAutomatedRouter } from './routes/refunds-automated.js';
+import { refundQueue } from './queue/refund-queue.js';
+import { databaseRouter } from './routes/database.js';
+import { contractAuditRouter } from './routes/contract-audit.js';
+import { escalationRouter } from './routes/escalation.js';
+
+// TSOA Controllers for OpenAPI generation
+import { HealthController } from './controllers/health.controller.js';
+import { GasController } from './controllers/gas.controller.js';
+
+// Swagger UI for API documentation
+import { swaggerRouter } from './routes/swagger.js';
 
 // Validate environment variables at startup
 validateEnv();
@@ -158,9 +210,9 @@ const apiRateLimiter = tokenBucketRateLimit({ keyPrefix: 'rl:api' });
 const invoiceLimiter = tokenBucketRateLimit({
   keyPrefix: 'rl:invoice',
   endpointConfig: {
-    free:       { capacity: 10,  refillRate: 0.1, burstAllowance: 2  },
-    pro:        { capacity: 60,  refillRate: 1,   burstAllowance: 10 },
-    enterprise: { capacity: 300, refillRate: 5,   burstAllowance: 50 },
+    free: { capacity: 10, refillRate: 0.1, burstAllowance: 2 },
+    pro: { capacity: 60, refillRate: 1, burstAllowance: 10 },
+    enterprise: { capacity: 300, refillRate: 5, burstAllowance: 50 },
   },
 });
 
@@ -198,6 +250,9 @@ app.use('/webhooks', webhookHandlersRouter);
 
 app.use(express.json());
 app.use(express.text({ type: ['text/csv', 'text/plain'] }));
+app.use('/api', openApiValidator({ validateResponses: process.env.OPENAPI_VALIDATE_RESPONSES === 'true' }));
+// Redact PII from all outgoing JSON API responses — Issue #668
+app.use('/api', piiRedactionMiddleware);
 
 app.use(
   compressionMiddleware({
@@ -207,6 +262,9 @@ app.use(
   })
 );
 
+app.use(paginationMiddleware);
+app.use(etagMiddleware);
+
 app.use(slaTrackingMiddleware);
 app.use(sessionMiddleware);
 app.use(tokenAuthMiddleware);
@@ -214,6 +272,9 @@ app.use(cacheControlNoStore);
 
 app.use(healthRouter);
 app.use('/docs', docsRouter);
+app.use('/api-docs', docsRouter);
+app.use('/swagger', swaggerRouter);
+app.use('/api', errorsRouter);
 
 // Cold start monitoring dashboard — available before auth/rate-limit middleware
 app.use('/api/v1/cold-start', coldStartMonitorRouter);
@@ -232,7 +293,7 @@ app.use('/api/', slidingWindowRateLimit({ keyPrefix: 'sw:api' }));
 app.use('/api/', requestCoalescer());
 
 // Apply sandbox-aware rate limiting for sandbox endpoints
-const sandboxRateLimiter = tokenBucketRateLimit({ 
+const sandboxRateLimiter = tokenBucketRateLimit({
   keyPrefix: 'rl:sandbox',
   sandboxMode: env.NODE_ENV === 'sandbox' || env.NODE_ENV === 'development'
 });
@@ -250,8 +311,15 @@ apiV1Router.use('/queue', bullMQMonitorRouter);
 apiV1Router.use('/outbox', outboxRouter);
 apiV1Router.use('/sla', slaRouter);
 apiV1Router.use('/onboarding', onboardingRouter);
+
+// Role-based onboarding checklist — Issue #632
+apiV1Router.use('/onboarding-checklist', roleOnboardingRouter);
+
+// Payment method micro-deposit verification — Issue #633
+apiV1Router.use('/payment-methods', paymentMethodsRouter);
 apiV1Router.use('/legacy', legacyRouter);
 apiV1Router.use('/flags', flagsRouter);
+apiV1Router.use('/feature-flags', featureFlagsRouter);
 apiV1Router.use('/rate-limit', rateLimitAnalyticsRouter);
 apiV1Router.use('/zk-identity', zkIdentityRouter);
 apiV1Router.use('/kyb', kybRouter);
@@ -268,6 +336,10 @@ apiV1Router.use('/disputes', disputeRoutes);
 apiV1Router.use('/emails', emailRouter);
 apiV1Router.use('/portfolio', portfolioRouter);
 apiV1Router.use('/backup', backupRouter);
+apiV1Router.use('/archival', archivalRouter);
+apiV1Router.use('/project-archival', projectArchivalRouter);
+apiV1Router.use('/admin/contracts/upgrade', upgradeValidatorRouter);
+apiV1Router.use('/bridge/monitor', bridgeMonitorRouter);
 apiV1Router.use('/ip-allowlist', ipAllowlistRouter);
 apiV1Router.use('/push', pushRouter);
 apiV1Router.use('/nfc', nfcRouter);
@@ -281,6 +353,7 @@ apiV1Router.use('/escrow', escrowRouter);
 apiV1Router.use('/disputes', disputesRouter);
 apiV1Router.use('/withdrawals', withdrawalsRouter);
 apiV1Router.use('/swap', swapSimulationRouter);
+apiV1Router.use('/chain/reorgs', reorgRouter);
 apiV1Router.get('/compression/metrics', (_req, res) => {
   res.json(getCompressionMetrics());
 });
@@ -328,15 +401,51 @@ app.use('/api/v1/fiat-payments', fiatPaymentsRouter);
 
 // Merchant dynamic payment links
 app.use('/api/v1/payment-links', paymentLinksRouter);
+app.use('/api/v1/payment-strategies', paymentStrategiesRouter);
 
-// Merchant tax report generation (summary, 1099-K, VAT, nexus, CSV export)
+// Merchant tax report generation (summary, 1099-K, VAT, nexus, CSV export,
+// jurisdiction rule engine, exemptions, compliance checks, audit trail — Issue #627)
 app.use('/api/v1/tax', taxRouter);
+
+// Automated payment reconciliation: matching, exceptions, reporting, analytics (Issue #628)
+app.use('/api/v1/payment-reconciliation', paymentReconciliationRouter);
+
+// Structured payment dispute resolution: workflow, evidence, resolution tracking,
+// notifications, analytics (Issue #641)
+app.use('/api/v1/dispute-resolution', disputeResolutionRouter);
+
+// FX rate cache/history/alerts backing multi-currency invoices (Issue #626)
+app.use('/api/v1/fx', fxRouter);
+
+// Subscription cohort retention/revenue/churn analytics (Issue #629)
+app.use('/api/v1/analytics/cohorts', cohortAnalyticsRouter);
 
 // Third-party backend plugins
 app.use('/api/v1/admin/plugins', pluginsRouter);
+app.use('/api/v1/admin/configuration', configurationRouter);
+
+// Smart contract emergency pause management (Issue #513)
+app.use('/api/v1/admin/contracts/pause', pauseManagerRouter);
+app.use('/api/v1/admin/contracts/upgrade', upgradeValidatorRouter);
+app.use('/api/v1/archival', archivalRouter);
+app.use('/api/v1/bridge/monitor', bridgeMonitorRouter);
+app.use('/api/v1/gas', gasRouter);
+app.use('/api/v1/vaults', vaultsRouter);
+
+// Streaming exports for large datasets (Issue #500)
+app.use('/api/v1/exports', streamingExportRouter);
 
 // Project + milestone delivery approval workflow
 app.use('/api/v1/projects', projectsRouter);
+
+// Automated project archival + data retention
+app.use('/api/v1/project-archival', projectArchivalRouter);
+
+// Payment categories — Issue #251
+app.use('/api/v1/categories', categoriesRouter);
+
+// Automated contract auditing with security scoring (Issue #634)
+app.use('/api/v1/contract-audit', contractAuditRouter);
 
 // Two-factor authentication
 app.use('/api/v1/auth/2fa', twoFactorAuthRouter);
@@ -351,12 +460,69 @@ app.use('/api/v1/auth/sessions', sessionsRouter);
 // HMAC signing key management — Issue #510
 app.use('/api/v1/developers/signing-keys', signingKeysRouter);
 
+// API key usage tracking and quota enforcement — Issue #471
+app.use('/api/v1/developers/api-keys', apiUsageTracker, apiKeysRouter);
+
+// Atomic swaps / HTLC management — Issue #470
+app.use('/api/v1/swaps', swapsRouter);
+
+// Multi-signature timelock treasury management — Issue #469
+app.use('/api/v1/treasury', treasuryRouter);
+
+// Custom report builder with saved templates — Issue #472
+app.use('/api/v1/reports', reportsRouter);
+
+// Payment reconciliation report generator — Issue #465
+app.use('/api/v1/reconciliation', reconciliationRouter);
+
+// Flash loan-protected liquidity provider integration — Issue #466
+app.use('/api/v1/liquidity/protection', liquidityProtectionRouter);
+
+// Bulk payment CSV upload — Issue #467
+app.use('/api/v1/payments/bulk', bulkPaymentsRouter);
+
+// Dynamic fee calculation engine with tiered pricing — Issue #468
+app.use('/api/v1/fees', feesRouter);
+
+// Smart contract event indexer with real-time WebSocket streams — Issue #447
+app.use('/api/v1/indexer', indexerRouter);
+
+// AI-powered payment routing engine — Issue #446
+app.use('/api/v1/routing/ai', aiRoutingRouter);
+
+// PII classification and redaction audit — Issue #668
+app.use('/api/v1/pii', piiRouter);
+
+// Multi-tenant workspaces with RBAC
+app.use('/api/v1/workspaces', workspacesRouter);
+
+// Enhanced refund processing with policy engine and multi-level approval
+app.use('/api/v1/refunds-enhanced', refundsEnhancedRouter);
+
+// Automated refund processing with policy engine, queue, notifications, and analytics (Issue #642)
+app.use('/api/v1/refunds-automated', refundsAutomatedRouter);
+
+// Start the refund background queue processor
+refundQueue.start();
+
+// Database connection pool and performance monitoring
+app.use('/api/v1/monitoring/pool', poolMonitorRouter);
+
+// Database query performance, index usage, and slow query dashboard
+app.use('/api/v1/database', databaseRouter);
+
+// Automated escalation with SLA tracking — Issue #646
+app.use('/api/v1/escalation', escalationRouter);
+
 // Sandbox environment for testing (with relaxed rate limits)
 const sandboxRouter = createSandboxRouter(getSandboxManager(), getMockPaymentProcessor(), getTestDataSeeder());
 app.use('/api/v1/sandbox', sandboxRateLimiter, sandboxRouter);
 
 // Email system v2 with templates, analytics, and localization
 app.use('/api/v2/email', emailV2Router);
+
+// Subscription billing with metered usage and tiered pricing (Issue #570)
+app.use('/api/v1/subscriptions', subscriptionsRouter);
 
 // GraphQL gateway with federation-ready schema and subscriptions stream
 app.use('/graphql', graphQLRouter);
@@ -365,7 +531,7 @@ app.use('/graphql/ws', graphQLWsRouter);
 // Dev tooling routes (only in development)
 if (env.NODE_ENV === 'development') {
   app.use('/api/dev', devDevRouter);
-  
+
   // Initialize dev log WebSocket transport
   import('./logger/dev-transport.js').then(({ createDevLogTransport }) => {
     createDevLogTransport(server, '/ws/logs');
@@ -421,15 +587,31 @@ if (config.queue.enabled) {
 startWebhookWorker();
 startOutboxPublisher({ useBullMQ: Boolean(process.env.REDIS_URL) });
 
-// Auto-escalation cron
+// Auto-escalation cron (legacy escrow disputes + Issue #641 dispute-resolution)
 setInterval(async () => {
   const count = await disputeService.processEscalations();
   if (count > 0) console.log(`Escalated ${count} disputes`);
+  await runScheduledDisputeEscalations();
 }, 5 * 60 * 1000);
 
 if (featureFlags.evaluate('batch-operations')) {
   batchProcessor.start();
   console.log('[BatchProcessor] Started');
+}
+
+// Feature flag gradual-rollout scheduler + stale-flag detection (Issue #476)
+// Runs every minute so percentage rollouts advance without manual triggers.
+// Set FF_SCHEDULER_ENABLED=false to disable in tests.
+if (process.env.FF_SCHEDULER_ENABLED !== 'false') {
+  setInterval(async () => {
+    try {
+      const advanced = await featureFlagRegistry.runScheduledRollouts(new Date());
+      if (advanced > 0) console.log(`[FeatureFlags] Advanced ${advanced} scheduled rollout(s)`);
+    } catch (err) {
+      console.error('[FeatureFlags] Scheduler tick failed:', err);
+    }
+  }, 60_000);
+  console.log('[FeatureFlags] Gradual-rollout scheduler started');
 }
 
 getRedisCache().connect().then(() => {
@@ -442,7 +624,11 @@ const server = http.createServer(app);
 const wsServer = attachWebSocketServer({ server, options: { path: '/ws' } });
 bindWebSocketServer(wsServer);
 app.set('wsServer', wsServer);
-app.use('/api/v1/websocket', createWebSocketRouter(wsServer));
+
+// WebSocket connection manager: IP rate limiting + auth gating (#477)
+const wsConnectionManager = createConnectionManager(server, wsServer, { maxConnectionsPerIp: 10 });
+
+app.use('/api/v1/websocket', createWebSocketRouter(wsServer, wsConnectionManager));
 app.use('/api/v1/analytics', createAnalyticsRouter(wsServer));
 
 const analyticsInterval = setInterval(() => {
@@ -487,10 +673,24 @@ server.listen(config.server.port, () => {
     startWebhookWorker();
     startOutboxPublisher({ useBullMQ: Boolean(process.env.REDIS_URL) });
 
-    // Auto-escalation cron
+    // Chain reorganization detector (Issue #514)
+    if (
+      process.env.ETHEREUM_RPC_URL ||
+      process.env.POLYGON_RPC_URL ||
+      process.env.STELLAR_RPC_URL
+    ) {
+      getReorgDetector().start().then(() => {
+        console.log('[ReorgDetector] Chain reorg monitoring started');
+      }).catch((err: Error) => {
+        console.error('[ReorgDetector] Startup error:', err.message);
+      });
+    }
+
+    // Auto-escalation cron (legacy escrow disputes + Issue #641 dispute-resolution)
     setInterval(async () => {
       const count = await disputeService.processEscalations();
       if (count > 0) console.log(`Escalated ${count} disputes`);
+      await runScheduledDisputeEscalations();
     }, 5 * 60 * 1000);
 
     // Batch processor
@@ -505,6 +705,11 @@ server.listen(config.server.port, () => {
     }).catch(() => {
       console.log('[RedisCache] Not available, using in-memory cache only');
     });
+
+    // Bridge monitoring — Issue #475
+    getBridgeMonitorService().start(
+      parseInt(process.env.BRIDGE_MONITOR_POLL_MS ?? '30000', 10),
+    );
   });
 });
 
@@ -555,6 +760,20 @@ const shutdown = (signal: string) => {
       console.log('Batch processor stopped.');
     } catch (err) {
       console.error('Error stopping batch processor:', err);
+    }
+
+    try {
+      getBridgeMonitorService().stop();
+      console.log('Bridge monitor stopped.');
+    } catch (err) {
+      console.error('Error stopping bridge monitor:', err);
+    }
+
+    try {
+      getReorgDetector().stop();
+      console.log('Reorg detector stopped.');
+    } catch (err) {
+      console.error('Error stopping reorg detector:', err);
     }
 
     clearInterval(analyticsInterval);

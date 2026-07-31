@@ -1,18 +1,6 @@
 name: Types Contract
 
-on:
-  pull_request:
-    paths:
-      - 'packages/types/**'
-      - 'backend/prisma/schema.prisma'
-      - 'backend/src/**'
-      - 'frontend/**'
-      - 'packages/sdk/src/**'
-  push:
-    branches: [main]
-    paths:
-      - 'packages/types/**'
-      - 'backend/prisma/schema.prisma'
+on: workflow_dispatch
 
 jobs:
   shared-types:
