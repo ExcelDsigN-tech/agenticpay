@@ -1,23 +1,31 @@
 'use client';
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Folder, FileText, Wallet, Menu, X, QrCode } from 'lucide-react';
+import { Link, usePathname, useRouter } from '@/i18n/navigation';
+import { LayoutDashboard, Folder, FileText, Wallet, Scale, Menu, X, QrCode, Activity, Languages, Archive, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'Projects', href: '/dashboard/projects', icon: Folder },
-  { name: 'Invoices', href: '/dashboard/invoices', icon: FileText },
-  { name: 'Payments', href: '/dashboard/payments', icon: Wallet },
-  { name: 'QR / NFC Pay', href: '/dashboard/payments/qr', icon: QrCode },
-];
-
 export function Sidebar() {
+  const t = useTranslations('nav');
+  const tNav = useTranslations('dashboard');
   const pathname = usePathname();
+  const router = useRouter();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+
+  const navigation = [
+    { name: t('dashboard'), href: '/dashboard', icon: LayoutDashboard },
+    { name: t('projects'), href: '/dashboard/projects', icon: Folder },
+    { name: t('invoices'), href: '/dashboard/invoices', icon: FileText },
+    { name: t('payments'), href: '/dashboard/payments', icon: Wallet },
+    { name: t('qrPay'), href: '/dashboard/payments/qr', icon: QrCode },
+    { name: t('disputes'), href: '/dashboard/disputes', icon: Scale },
+    { name: t('bridgeMonitoring'), href: '/dashboard/monitoring/bridges', icon: Activity },
+    { name: t('archival'), href: '/dashboard/admin/archival', icon: Archive },
+    { name: t('upgradeSafety'), href: '/dashboard/admin/contracts/upgrades', icon: ShieldCheck },
+    { name: t('translations'), href: '/dashboard/admin/i18n', icon: Languages },
+  ];
 
   return (
     <>
@@ -28,7 +36,7 @@ export function Sidebar() {
           size="icon"
           onClick={() => setIsMobileOpen(!isMobileOpen)}
           className="bg-white shadow-lg"
-          aria-label={isMobileOpen ? 'Close menu' : 'Open menu'}
+          aria-label={isMobileOpen ? tNav('closeMenu') : tNav('openMenu')}
           aria-expanded={isMobileOpen}
           aria-controls="sidebar-navigation"
         >
@@ -42,8 +50,8 @@ export function Sidebar() {
         role="navigation"
         aria-label="Main navigation"
         className={cn(
-          'fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 transform transition-transform duration-200 ease-in-out lg:translate-x-0',
-          isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+          'fixed inset-y-0 start-0 z-40 w-64 bg-white border-e border-gray-200 transform transition-transform duration-200 ease-in-out lg:translate-x-0',
+          isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0 rtl:translate-x-full rtl:lg:translate-x-0'
         )}
       >
         <div className="flex flex-col h-full">
@@ -71,6 +79,8 @@ export function Sidebar() {
                 <Link
                   key={item.name}
                   href={item.href}
+                  onMouseEnter={() => router.prefetch(item.href)}
+                  onFocus={() => router.prefetch(item.href)}
                   onClick={() => setIsMobileOpen(false)}
                   className={cn(
                     'flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500',

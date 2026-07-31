@@ -1,16 +1,5 @@
-export class AgenticPayError extends Error {
-  readonly status?: number;
-  readonly code?: string;
-  readonly details?: unknown;
-
-  constructor(message: string, options?: { status?: number; code?: string; details?: unknown }) {
-    super(message);
-    this.name = 'AgenticPayError';
-    this.status = options?.status;
-    this.code = options?.code;
-    this.details = options?.details;
-  }
-}
+import { AgenticPayError } from './errors/base.js';
+export { AgenticPayError } from './errors/base.js';
 
 export class AuthenticationError extends AgenticPayError {
   constructor(message = 'Authentication failed', details?: unknown) {
@@ -33,6 +22,13 @@ export class ValidationError extends AgenticPayError {
   }
 }
 
+export class NotFoundError extends AgenticPayError {
+  constructor(message = 'Resource not found', details?: unknown) {
+    super(message, { status: 404, code: 'NOT_FOUND', details });
+    this.name = 'NotFoundError';
+  }
+}
+
 export class RateLimitError extends AgenticPayError {
   constructor(message = 'Rate limit exceeded', details?: unknown) {
     super(message, { status: 429, code: 'RATE_LIMIT_EXCEEDED', details });
@@ -46,3 +42,5 @@ export class NetworkError extends AgenticPayError {
     this.name = 'NetworkError';
   }
 }
+
+export * from './errors/generated.js';

@@ -10,8 +10,10 @@ import {
   AuthenticationError,
   AuthorizationError,
   NetworkError,
+  NotFoundError,
   RateLimitError,
   ValidationError,
+  createTypedApiError,
 } from './errors.js';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -131,9 +133,14 @@ export class AgenticPayClient {
     const code = payload?.error?.code ?? payload?.code;
     const details = payload?.error?.details ?? payload?.errors ?? payload;
 
+    if (typeof code === 'string' && code.startsWith('ERR_')) {
+      return createTypedApiError(code, message, details);
+    }
+
     if (status === 400) return new ValidationError(message, details);
     if (status === 401) return new AuthenticationError(message, details);
     if (status === 403) return new AuthorizationError(message, details);
+    if (status === 404) return new NotFoundError(message, details);
     if (status === 429) return new RateLimitError(message, details);
     return new AgenticPayError(message, { status, code, details });
   }

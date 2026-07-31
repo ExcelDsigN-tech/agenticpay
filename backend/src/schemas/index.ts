@@ -205,3 +205,190 @@ export const refundEvaluationSchema = z.object({
   hasChargeback: z.boolean().default(false),
   hasDispute: z.boolean().default(false),
 });
+
+// ── Automated Refund Schemas (Issue #642) ────────────────────────────────────
+
+export const policyRuleSchema = z.object({
+  field: z.enum([
+    'amount_paid', 'requested_amount', 'days_since_payment', 'payment_type',
+    'customer_tier', 'customer_total_spent', 'previous_refund_count',
+    'previous_refund_amount', 'has_chargeback', 'has_dispute',
+    'has_reason', 'reason', 'currency',
+  ]),
+  operator: z.enum(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in', 'contains']),
+  value: z.unknown(),
+  outcome: z.enum(['approve', 'reject', 'manual_review']),
+  priority: z.number().int().min(0).default(0),
+});
+
+export const refundEnginePolicySchema = z.object({
+  workspaceId: z.string().min(1),
+  name: z.string().min(1).max(100),
+  fullRefundWindowDays: z.number().int().min(0).default(30),
+  autoApprovalThreshold: z.number().nonnegative().default(100),
+  alwaysRefundUnderAmount: z.number().nonnegative().default(25),
+  maxPartialRefundPct: z.number().min(0).max(100).default(100),
+  requireReason: z.boolean().default(true),
+  firstApprovalThreshold: z.number().nonnegative().default(500),
+  secondApprovalThreshold: z.number().nonnegative().default(5000),
+  rules: z.array(policyRuleSchema).default([]),
+  isActive: z.boolean().default(true),
+});
+
+export const refundEngineEvaluationSchema = z.object({
+  workspaceId: z.string().min(1),
+  paymentId: z.string().min(1),
+  paymentType: z.enum(['card', 'crypto', 'bank_transfer']),
+  amountPaid: z.number().positive(),
+  requestedAmount: z.number().positive(),
+  currency: z.string().default('USD'),
+  daysSincePayment: z.number().int().min(0),
+  reason: z.string().optional(),
+  hasChargeback: z.boolean().default(false),
+  hasDispute: z.boolean().default(false),
+  customerTier: z.enum(['basic', 'premium', 'enterprise']).optional(),
+  customerTotalSpent: z.number().nonnegative().optional(),
+  previousRefundCount: z.number().int().min(0).optional(),
+  previousRefundAmount: z.number().nonnegative().optional(),
+  lineItems: z.array(z.object({
+    label: z.string().min(1),
+    amount: z.number().nonnegative(),
+    quantity: z.number().int().min(1).default(1),
+    reason: z.string().optional(),
+  })).optional(),
+});
+
+export const refundApprovalSchema = z.object({
+  level: z.enum(['first', 'second', 'third']),
+  comment: z.string().optional(),
+});
+
+export const refundCancelSchema = z.object({
+  reason: z.string().optional(),
+});
+
+export const refundAnalyticsQuerySchema = z.object({
+  fromDate: z.string().optional(),
+  toDate: z.string().optional(),
+  granularity: z.enum(['day', 'week', 'month']).default('day'),
+});
+
+export const refundWebhookSubscribeSchema = z.object({
+  url: z.string().url(),
+  events: z.array(z.string()).min(1),
+  secret: z.string().optional(),
+});
+
+export const retryRefundSchema = z.object({
+  refundId: z.string().min(1),
+});
+
+// Multisig Wallet Schemas
+export const createMultisigGroupSchema = z.object({
+  name: z.string().min(1, 'Wallet name is required').max(100),
+  walletAddresses: z
+    .array(z.string().min(1, 'Wallet address is required'))
+    .min(2, 'At least 2 signers required')
+    .max(20, 'Maximum 20 signers allowed'),
+  threshold: z.number().int().min(1, 'Threshold must be at least 1'),
+  mode: z.enum(['onchain', 'offchain']).optional(),
+  timeoutSeconds: z.number().int().positive().optional(),
+});
+
+export const updateMultisigGroupSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  timeoutSeconds: z.number().int().positive().optional(),
+});
+
+export const addSignerSchema = z.object({
+  newSigner: z.string().min(1, 'New signer address is required'),
+  proposerSigner: z.string().min(1, 'Proposer signer address is required'),
+  proposerSignature: z.string().min(1, 'Proposer signature is required'),
+});
+
+export const removeSignerSchema = z.object({
+  signerToRemove: z.string().min(1, 'Signer address to remove is required'),
+  proposerSigner: z.string().min(1, 'Proposer signer address is required'),
+  proposerSignature: z.string().min(1, 'Proposer signature is required'),
+  newThreshold: z.number().int().min(1).optional(),
+});
+
+export const changeThresholdSchema = z.object({
+  newThreshold: z.number().int().min(1, 'New threshold must be at least 1'),
+  proposerSigner: z.string().min(1, 'Proposer signer address is required'),
+  proposerSignature: z.string().min(1, 'Proposer signature is required'),
+});
+
+export const createMultisigPaymentSchema = z.object({
+  groupId: z.string().min(1, 'Group ID is required'),
+  amount: z.number().positive('Amount must be positive'),
+  currency: z.string().min(1, 'Currency is required').default('USD'),
+  description: z.string().optional(),
+  recipient: z.string().optional(),
+  mode: z.enum(['onchain', 'offchain']).optional(),
+  metadata: z.record(z.string()).optional(),
+  timeoutSeconds: z.number().int().positive().optional(),
+});
+
+export const approveMultisigPaymentSchema = z.object({
+  signer: z.string().min(1, 'Signer address is required'),
+  signature: z.string().min(1, 'Signature is required'),
+});
+
+export const rejectMultisigPaymentSchema = z.object({
+  signer: z.string().min(1, 'Signer address is required'),
+  signature: z.string().min(1, 'Signature is required'),
+  reason: z.string().optional(),
+});
+
+// ── Withdrawal allowlist (Issue #519) ───────────────────────────────────────
+
+export const configureWalletWithdrawalSchema = z.object({
+  approvalThreshold: z.number().int().min(1).optional(),
+  approvers: z.array(z.string().min(1)).optional(),
+  velocityLimits: z
+    .object({
+      maxAmountPerDay: z.number().positive().optional(),
+      maxAmountPerHour: z.number().positive().optional(),
+      maxCountPerHour: z.number().int().positive().optional(),
+    })
+    .optional(),
+});
+
+export const addWithdrawalAllowlistEntrySchema = z.object({
+  address: z.string().min(1, 'Address is required'),
+  label: z.string().optional(),
+  addedBy: z.string().min(1, 'addedBy is required'),
+});
+
+export const createWithdrawalRequestSchema = z.object({
+  toAddress: z.string().min(1, 'Destination address is required'),
+  amount: z.number().positive('Amount must be positive'),
+  currency: z.string().min(1).default('XLM'),
+  requestedBy: z.string().min(1, 'requestedBy is required'),
+});
+
+export const approveWithdrawalRequestSchema = z.object({
+  approver: z.string().min(1, 'Approver is required'),
+});
+
+export const rejectWithdrawalRequestSchema = z.object({
+  approver: z.string().min(1, 'Approver is required'),
+});
+
+// ── Slippage protection (Issue #521) ────────────────────────────────────────
+
+export const simulateSwapSchema = z.object({
+  amountIn: z.number().positive('amountIn must be positive'),
+  quotedPrice: z.number().positive('quotedPrice must be positive'),
+  priceHistory: z
+    .array(
+      z.object({
+        price: z.number().positive(),
+        timestampMs: z.number().int().positive(),
+      })
+    )
+    .min(1, 'priceHistory must include at least one sample'),
+  slippageBps: z.number().int().min(0).optional(),
+  poolLiquidity: z.number().positive().optional(),
+});
