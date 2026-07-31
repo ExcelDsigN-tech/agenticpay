@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { useAuthStore } from '@/store/useAuthStore';
-import { useRouter, usePathname } from 'next/navigation';
-import { useThemeStore } from '@/store/useThemeStore';
-import { Button } from '@/components/ui/button';
+import { useEffect, useState } from "react";
+import { useAuthStore } from "@/store/useAuthStore";
+import { useRouter, usePathname } from "next/navigation";
+import { useThemeStore } from "@/store/useThemeStore";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,8 +12,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Bell,
   LogOut,
@@ -21,33 +21,34 @@ import {
   Settings,
   Sun,
   Moon,
-} from 'lucide-react';
-import { toast } from 'sonner';
-import { useDisconnect, useAccount } from 'wagmi';
-import { web3auth } from '@/lib/web3auth';
+  Clock,
+  Menu,
+  Search,
+  RefreshCw,
+  CloudOff,
+} from "lucide-react";
+import { toast } from "sonner";
+import { useDisconnect, useAccount } from "wagmi";
+import { web3auth } from "@/lib/web3auth";
 import {
   Breadcrumb,
   BreadcrumbList,
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
-import { getDashboardBreadcrumbs } from '@/lib/breadcrumbs';
-import { ThemeSettingsModal } from '@/components/theme/ThemeSettingsModal';
-import { TimezoneSettingsModal } from '@/components/settings/TimezoneSettingsModal';
-import { getBrowserTimeZone, isValidTimeZone } from '@/lib/utils';
-
-// Our new CommandMenu!
-import { CommandMenu } from './CommandMenu';
-
-// I built the isolated NetworkIndicator component right here
-/* ---------------- TYPES ---------------- */
-type BreadcrumbItemType = {
-  label: string;
-  href: string;
-};
+} from "@/components/ui/breadcrumb";
+import { getDashboardBreadcrumbs } from "@/lib/breadcrumbs";
+import { ThemeSettingsModal } from "@/components/theme/ThemeSettingsModal";
+import { TimezoneSettingsModal } from "@/components/settings/TimezoneSettingsModal";
+import { getBrowserTimeZone, isValidTimeZone } from "@/lib/utils";
+import { CommandMenu } from "./CommandMenu";
+import { useCommandStore } from "@/store/useCommandStore";
+import { useOfflineStatus } from "@/components/offline/OfflineProvider";
+import { LocaleSwitcher } from "@/components/common/locale-switcher";
+import { CopyButton } from "@/components/ui/copy-button";
 
 /* ---------------- NETWORK INDICATOR ---------------- */
+
 const NetworkIndicator = () => {
   const { chain, isConnected } = useAccount();
 
@@ -55,192 +56,214 @@ const NetworkIndicator = () => {
 
   if (!chain) {
     return (
-      <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-red-100 text-red-700 text-sm font-medium border border-red-200">
-        <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-        Wrong Network
+      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] sm:text-xs font-bold border border-red-200 uppercase tracking-tight">
+        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+        Error
       </div>
     );
   }
 
   const isTestnet = chain.testnet === true;
+  const bgColor = isTestnet
+    ? "bg-amber-100 border-amber-200 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/50"
+    : "bg-green-100 border-green-200 text-green-700 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800/50";
+  const dotColor = isTestnet ? "bg-amber-500" : "bg-green-500";
 
   return (
-    <div
-      className={`flex items-center gap-2 px-3 py-1 rounded-full border text-sm font-medium ${
-        isTestnet
-          ? 'bg-yellow-100 text-yellow-800 border-yellow-200'
-          : 'bg-green-100 text-green-800 border-green-200'
-      }`}
-    >
-      <span
-        className={`w-2 h-2 rounded-full ${
-          isTestnet ? 'bg-yellow-500' : 'bg-green-500'
-        }`}
-      />
-      {chain.name}
+    <div className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-[10px] sm:text-xs font-bold uppercase tracking-tight ${bgColor}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`}></span>
+      <span className="truncate max-w-[60px] sm:max-w-none">{chain.name}</span>
     </div>
   );
 };
 
-/* ---------------- HEADER ---------------- */
-export function Header() {
-  const { name, email, address, timezone, logout, setTimezone } =
-    useAuthStore();
+export function Header({ onMenuClick }: { onMenuClick: () => void }) {
+  const { name, address, timezone, logout, setTimezone, email } = useAuthStore();
   const { isDark, mode, setIsDark } = useThemeStore();
+  const { open: openSearch } = useCommandStore();
   const { disconnect } = useDisconnect();
-
+  const { isOnline, queueLength, isSyncing } = useOfflineStatus();
   const router = useRouter();
   const pathname = usePathname();
-
-  const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItemType[]>([]);
+  const breadcrumbs = getDashboardBreadcrumbs(pathname);
   const [themeSettingsOpen, setThemeSettingsOpen] = useState(false);
   const [timezoneSettingsOpen, setTimezoneSettingsOpen] = useState(false);
 
-  /* -------- Breadcrumbs -------- */
-  useEffect(() => {
-    // Wrap setBreadcrumbs in requestAnimationFrame to avoid synchronous state update warning
-    const items = getDashboardBreadcrumbs(pathname);
-    requestAnimationFrame(() => setBreadcrumbs(items));
-  }, [pathname]);
-
-  /* -------- Timezone detection (SAFE) -------- */
   useEffect(() => {
     if (!timezone) {
-      const detected = getBrowserTimeZone();
-      if (detected && isValidTimeZone(detected)) {
-        setTimezone(detected);
+      const detectedTimeZone = getBrowserTimeZone();
+      if (detectedTimeZone && isValidTimeZone(detectedTimeZone)) {
+        setTimezone(detectedTimeZone);
       }
     }
-  }, [timezone, setTimezone]);
+  }, [setTimezone, timezone]);
 
-  /* -------- Logout -------- */
   const handleLogout = async () => {
     disconnect();
     if (web3auth) await web3auth.logout();
-
     logout();
-    toast.success('Logged out successfully');
-    router.push('/auth');
+    toast.success("Logged out successfully");
+    router.push("/auth");
   };
 
-  /* -------- Theme toggle -------- */
   const handleManualToggle = () => {
     const next = !isDark;
     setIsDark(next);
-    document.documentElement.classList.toggle('dark', next);
+    document.documentElement.classList.toggle("dark", next);
   };
 
-  /* -------- Helpers -------- */
   const initials =
     name
-      ?.split(' ')
-      .map((n) => n[0])
-      .join('')
+      ?.split(" ")
+      .map((part) => part[0])
+      .join("")
       .toUpperCase()
-      .slice(0, 2) || 'U';
-
+      .slice(0, 2) || "U";
   const shortAddress = address
     ? `${address.slice(0, 6)}...${address.slice(-4)}`
-    : 'Not connected';
+    : "Not connected";
+  const showOfflineBadge = !isOnline || queueLength > 0 || isSyncing;
 
-  /* ---------------- UI ---------------- */
   return (
     <>
-      <header className="sticky top-0 z-30 w-full bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm border-b border-gray-200 dark:border-gray-700/60">
+      <header className="sticky top-0 z-30 w-full border-b border-gray-200 bg-white/80 backdrop-blur-sm dark:border-gray-700/60 dark:bg-gray-900/80">
         <div className="flex h-16 items-center justify-between px-4 sm:px-6">
           {/* LEFT */}
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100">
-            Dashboard
-          </h1>
+          <div className="flex items-center gap-2 sm:gap-4">
+            <Button variant="ghost" size="icon" className="md:hidden -ml-2" onClick={onMenuClick}>
+              <Menu className="h-5 w-5" />
+            </Button>
+            <div className="flex flex-col sm:flex-row sm:items-baseline sm:gap-3">
+              <h1 className="text-base sm:text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent truncate max-w-[100px] sm:max-w-none">
+                Dashboard
+              </h1>
+            </div>
+          </div>
 
           {/* RIGHT */}
-          <div className="flex items-center gap-4">
-            <NetworkIndicator />
-            
-            <CommandMenu />
+          <div className="flex items-center gap-1.5 sm:gap-3">
+            {showOfflineBadge && (
+              <div className="hidden sm:flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-900 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/50">
+                {isSyncing ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CloudOff className="h-3.5 w-3.5" />
+                )}
+                <span>
+                  {isSyncing
+                    ? `Syncing ${queueLength}`
+                    : !isOnline
+                      ? `Offline${queueLength > 0 ? ` - ${queueLength} queued` : ""}`
+                      : `${queueLength} queued`}
+                </span>
+              </div>
+            )}
 
-            {/* Notifications */}
-            <Button variant="ghost" size="icon">
-              <Bell className="h-5 w-5" />
+            <NetworkIndicator />
+
+            {address && (
+              <div className="hidden md:flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 dark:border-gray-700 dark:bg-gray-800/80">
+                <span className="text-[10px] font-mono text-gray-600 dark:text-gray-400 max-w-[120px] truncate">
+                  {shortAddress}
+                </span>
+                <CopyButton value={address} label="Wallet address copied" className="h-7 w-7" />
+              </div>
+            )}
+
+            <LocaleSwitcher />
+
+            <div className="hidden sm:block">
+              <CommandMenu />
+            </div>
+
+            <Button variant="ghost" size="icon" className="sm:hidden" onClick={openSearch}>
+              <Search className="h-4 w-4 text-gray-500" />
             </Button>
 
-            {/* Theme */}
+            <Button variant="ghost" size="icon" className="relative hidden sm:flex h-9 w-9">
+              <Bell className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+              <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+            </Button>
+
             <Button
               variant="ghost"
               size="icon"
-              onClick={mode === 'manual' ? handleManualToggle : undefined}
+              className="relative flex h-9 w-9"
+              onClick={mode === "manual" ? handleManualToggle : undefined}
+              title={
+                mode === "manual"
+                  ? isDark
+                    ? "Switch to light mode"
+                    : "Switch to dark mode"
+                  : `Auto: ${mode} mode`
+              }
             >
               {isDark ? (
-                <Moon className="h-5 w-5" />
+                <Moon className="h-4 w-4 text-gray-500 dark:text-gray-400" />
               ) : (
-                <Sun className="h-5 w-5" />
+                <Sun className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+              )}
+              {mode !== "manual" && (
+                <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3 items-center justify-center rounded-full bg-primary">
+                  <Clock className="h-2 w-2 text-primary-foreground" />
+                </span>
               )}
             </Button>
 
-            {/* USER MENU */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button className="flex items-center gap-3 h-auto py-2 px-3">
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback className="bg-gradient-to-r from-blue-500 to-purple-500 text-white">
-                      {initials}
-                    </AvatarFallback>
+                <Button variant="ghost" className="flex items-center gap-2 h-9 px-1.5 sm:px-2 rounded-full sm:rounded-lg">
+                  <Avatar className="h-7 w-7 sm:h-8 sm:w-8">
+                    <AvatarFallback className="bg-gradient-to-r from-blue-500 to-purple-500 text-white text-[10px] sm:text-xs">{initials}</AvatarFallback>
                   </Avatar>
-                  <div className="hidden sm:block text-left">
-                    <p className="text-sm font-medium">{name || 'User'}</p>
-                    <p className="text-xs text-gray-500">{shortAddress}</p>
+                  <div className="hidden lg:block text-left">
+                    <p className="text-xs font-semibold text-gray-900 dark:text-gray-100">{name || "User"}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-none">{shortAddress}</p>
                   </div>
                 </Button>
               </DropdownMenuTrigger>
-
-              <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuContent align="end" className="w-64">
                 <DropdownMenuLabel>
-                  <p className="text-sm font-medium">{name}</p>
-                  <p className="text-xs text-gray-500">{email}</p>
+                  <div className="flex flex-col space-y-1">
+                    <p className="text-sm font-semibold">{name || "User"}</p>
+                    <p className="text-xs text-gray-500 truncate">{email || "No email"}</p>
+                    {address && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <p className="text-[10px] text-gray-400 font-mono truncate flex-1">{address}</p>
+                        <CopyButton value={address} label="Wallet address copied" className="h-6 w-6" />
+                      </div>
+                    )}
+                  </div>
                 </DropdownMenuLabel>
-
                 <DropdownMenuSeparator />
-
                 <DropdownMenuItem>
-                  <User className="mr-2 h-4 w-4" />
-                  Profile
+                  <User className="mr-2 h-4 w-4" /> Profile
                 </DropdownMenuItem>
-
-                <DropdownMenuItem>
-                  <Settings className="mr-2 h-4 w-4" />
-                  Settings
+                <DropdownMenuItem onClick={() => setTimezoneSettingsOpen(true)}>
+                  <Clock className="mr-2 h-4 w-4" /> Timezone: {timezone}
                 </DropdownMenuItem>
-
+                <DropdownMenuItem onClick={() => setThemeSettingsOpen(true)}>
+                  <Settings className="mr-2 h-4 w-4" /> Theme Settings
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
-
-                <DropdownMenuItem
-                  onClick={handleLogout}
-                  className="text-red-600"
-                >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  Logout
+                <DropdownMenuItem onClick={handleLogout} className="text-red-600">
+                  <LogOut className="mr-2 h-4 w-4" /> Logout
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
 
-        {/* BREADCRUMBS */}
         {breadcrumbs.length > 0 && (
-          <div className="border-t bg-gray-50 px-4 sm:px-6 py-3">
+          <div className="border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/50 px-4 sm:px-6 py-2 overflow-x-auto no-scrollbar">
             <Breadcrumb>
-              <BreadcrumbList>
+              <BreadcrumbList className="flex-nowrap whitespace-nowrap">
                 {breadcrumbs.map((item, index) => (
-                  <div key={index} className="flex items-center gap-1.5">
+                  <div key={index} className="flex items-center gap-1.5 flex-shrink-0">
                     <BreadcrumbItem>
-                      <BreadcrumbLink href={item.href}>
-                        {item.label}
-                      </BreadcrumbLink>
+                      <BreadcrumbLink href={item.href} className="text-xs">{item.label}</BreadcrumbLink>
                     </BreadcrumbItem>
-
-                    {index < breadcrumbs.length - 1 && (
-                      <BreadcrumbSeparator />
-                    )}
+                    {index < breadcrumbs.length - 1 && <BreadcrumbSeparator className="text-[10px]" />}
                   </div>
                 ))}
               </BreadcrumbList>
@@ -249,12 +272,10 @@ export function Header() {
         )}
       </header>
 
-      {/* MODALS */}
       <ThemeSettingsModal
         open={themeSettingsOpen}
         onClose={() => setThemeSettingsOpen(false)}
       />
-
       <TimezoneSettingsModal
         open={timezoneSettingsOpen}
         onClose={() => setTimezoneSettingsOpen(false)}

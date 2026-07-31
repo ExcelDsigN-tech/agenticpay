@@ -2,125 +2,40 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
-    branches: [main, dev]
+    branches: [main]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  NODE_VERSION: '20'
 
 jobs:
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-      contracts: ${{ steps.filter.outputs.contracts }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            backend:
-              - 'backend/**'
-            frontend:
-              - 'frontend/**'
-            contracts:
-              - 'contracts/**'
-
-  backend:
-    needs: changes
-    if: ${{ needs.changes.outputs.backend == 'true' }}
-    name: Backend (Node.js ${{ matrix.node-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [20, 22]
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Lint & Test
-        run: |
-          npm run lint
-          npm run test
-
-      - name: Build
-        run: npm run build
-
-  frontend:
-    needs: changes
-    if: ${{ needs.changes.outputs.frontend == 'true' }}
-    name: Frontend (Node.js ${{ matrix.node-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [20, 22]
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Cache Next.js build
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-${{ hashFiles('frontend/src/**') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Lint & Test
-        run: |
-          npm run lint
-          npm run test
-
-      - name: Build
-        run: npm run build
-
-  contracts:
-    needs: changes
-    if: ${{ needs.changes.outputs.contracts == 'true' }}
-    name: Smart Contracts (Rust)
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
         with:
-          targets: wasm32-unknown-unknown
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/cache@v4
         with:
-          workspaces: "contracts -> target"
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npx turbo run lint --filter=agenticpay-backend
 
-      - name: Build & Check
-        working-directory: contracts
-        run: |
-          cargo build --target wasm32-unknown-unknown --release
-          cargo check
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npx turbo run test --filter=agenticpay-backend

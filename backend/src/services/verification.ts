@@ -1,14 +1,10 @@
 import OpenAI from 'openai';
+import { config } from '../config/env.js';
 
 let openaiClient: OpenAI | null = null;
 
 const getOpenAIClient = () => {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      'The OPENAI_API_KEY environment variable is missing or empty; provide it to run verification.'
-    );
-  }
+  const apiKey = config().OPENAI_API_KEY;
 
   if (!openaiClient) {
     openaiClient = new OpenAI({ apiKey });
@@ -40,6 +36,8 @@ export type VerificationUpdate = {
   summary?: string;
   details?: string[];
 };
+
+import { withQueryProfiling } from '../config/database.js';
 
 // In-memory store (replace with DB in production)
 const verifications = new Map<string, VerificationResult>();
@@ -87,7 +85,11 @@ export function storeVerification(result: VerificationResult): void {
 }
 
 export async function getVerification(id: string): Promise<VerificationResult | undefined> {
-  return verifications.get(id);
+  return withQueryProfiling(
+    'SELECT * FROM verifications WHERE id = ?',
+    'verification.service',
+    async () => verifications.get(id),
+  );
 }
 
 export function updateVerification(update: VerificationUpdate): VerificationResult | undefined {
